@@ -10,7 +10,7 @@ import { useOrg } from "../../lib/theme/OrgContext";
 import * as db from "../../lib/db";
 import type { Procedimiento, Requisicion, Ticket } from "../../lib/db/types";
 import { fechaEfectiva, fechaLocal, mesLocal } from "../../lib/fechaFolio";
-import { interpretarConsulta, type Consulta } from "../../lib/smartSearch";
+import { interpretarConsulta, esSaludo, type Consulta } from "../../lib/smartSearch";
 import { formatoMXN, generarCSV, descargarTexto } from "../../lib/utils";
 import type { Grafica, PuntoGrafica } from "./QuickChart";
 
@@ -21,6 +21,14 @@ const QuickChart = lazy(() => import("./QuickChart"));
 const FORMATO_MES = new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric" });
 const FORMATO_MES_CORTO = new Intl.DateTimeFormat("es-MX", { month: "short", year: "2-digit" });
 const FORMATO_FECHA_LARGA = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "long", year: "numeric" });
+
+// Respuesta fija a un saludo cuando NO hay IA configurada (con IA, el
+// propio chat libre ya contesta un saludo de forma natural — esto es
+// solo la red de seguridad sin proveedor). Una nada más, no una lista
+// al azar: no hay nada que "variar" en un saludo tan corto, y variarlo
+// solo complicaría el código sin que se note la diferencia.
+const RESPUESTA_SALUDO_SIN_IA =
+  "¡Hola! Soy Quick. Puedo ayudarte con tus datos de folios y finanzas — pregúntame algo como \"cuánto cobré ayer\", \"resumen de este mes\" o \"folios de Ana García\".";
 
 type DesgloseCorte = { total: number; grupos: { etiqueta: string; icono: typeof Banknote; tickets: Ticket[]; subtotal: number }[] };
 type ResumenMes = { total: number; folios: number; top: { nombre: string; cantidad: number; total: number }[] };
@@ -656,6 +664,18 @@ export function SmartSearchModal({ open, onClose }: { open: boolean; onClose: ()
       return;
     }
 
+    // Sin IA (o si Gemini falló), un saludo no debería caer en el
+    // flujo de clasificación de datos — "hola" no es una pregunta de
+    // folios, y mostrar "Sin resultados" para eso se siente como una
+    // caja de búsqueda rota, no como un chat. Misma forma de mensaje
+    // que respuestaLibre (texto normal de chat), solo que fija —
+    // ningún proveedor externo de por medio.
+    if (esSaludo(pregunta)) {
+      const actualizado: MensajeAsistente = { id: idAsistente, rol: "asistente", cargando: false, respuestaLibre: RESPUESTA_SALUDO_SIN_IA };
+      setMensajes((m) => m.map((msg) => (msg.id === idAsistente ? actualizado : msg)));
+      return;
+    }
+
     const c = (await db.interpretarConsultaIA(pregunta, historial)) ?? interpretarConsulta(pregunta);
 
     let actualizado: MensajeAsistente = { id: idAsistente, rol: "asistente", cargando: false, consulta: c };
@@ -1117,7 +1137,12 @@ function RespuestaAsistente({ mensaje: m, onIrACierre }: { mensaje: MensajeAsist
     const c = m.consulta;
     const resultados = m.resultados;
     if (resultados.length === 0) {
-      return <EmptyState title="Sin resultados" hint={`No encontré nada para "${c.texto}".`} />;
+      return (
+        <EmptyState
+          title={`No encontré nada para "${c.texto}"`}
+          hint='Prueba con un nombre o folio, o pregúntame algo como "cuánto cobré ayer" o "resumen de este mes".'
+        />
+      );
     }
     return (
       <div className="flex flex-col gap-2">

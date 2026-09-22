@@ -177,6 +177,22 @@ function extraerMetrica(texto: string): MetricaEstadistica {
   return "total";
 }
 
+const SALUDOS = ["hola", "hey", "hi", "hello", "buenas", "buenos dias", "buenas tardes", "buenas noches", "buen dia", "que tal", "saludos"];
+
+/** Un saludo, y solo un saludo — sin relación a ningún dato — se revisa
+ * ANTES que cualquier patrón de datos, para que Quick conteste como un
+ * chat de verdad ("¡Hola!") en vez de caer al modo de búsqueda y no
+ * encontrar nada (encontrado con quien usa el sistema probando
+ * exactamente esto: "hola" caía a {tipo: "busqueda"} y mostraba "Sin
+ * resultados", que se siente como una caja de búsqueda rota, no como
+ * un chat). A propósito solo hace match EXACTO contra la lista, nunca
+ * como prefijo — "hola, cuánto cobré ayer" sigue su camino normal como
+ * pregunta real, no se queda atorado en el saludo. */
+export function esSaludo(textoOriginal: string): boolean {
+  const texto = sinAcentos(textoOriginal.trim().toLowerCase()).replace(/[¡!¿?.,]/g, "");
+  return SALUDOS.includes(texto);
+}
+
 export function interpretarConsulta(textoOriginal: string, ahora: Date = new Date()): Consulta {
   const texto = sinAcentos(textoOriginal.toLowerCase().trim());
 
