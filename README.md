@@ -53,9 +53,10 @@ Google Gemini, para Quick (ver [`SECURITY.md`](SECURITY.md)).
 
 ## Seguridad
 
-Detalle completo de los controles implementados —autenticación,
-autorización, protección de datos, auditoría— en
-[`SECURITY.md`](SECURITY.md).
+Resumen ejecutivo de la revisión de seguridad en
+[`AUDITORIA.md`](AUDITORIA.md); detalle técnico completo de cada
+control implementado —autenticación, autorización, protección de
+datos, auditoría— en [`SECURITY.md`](SECURITY.md).
 
 ## Prueba de carga
 
