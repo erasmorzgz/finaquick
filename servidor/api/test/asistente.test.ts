@@ -175,6 +175,20 @@ describe("POST /asistente/chat", () => {
   });
 });
 
+describe("GET /estado-asistente", () => {
+  test("sin GEMINI_API_KEY, reporta sin-configurar (y nada más — ni modelo ni clave)", async () => {
+    const { status, cuerpo } = await admin.pedirJson("/estado-asistente");
+    assert.equal(status, 200);
+    assert.deepEqual(cuerpo, { estado: "sin-configurar" });
+  });
+
+  test("exige sesión iniciada", async () => {
+    const sinSesion = crearCliente();
+    const { status } = await sinSesion.pedirJson("/estado-asistente");
+    assert.equal(status, 401);
+  });
+});
+
 describe("Límite de tasa del asistente", () => {
   test("corta con 429 después de 40 peticiones en la ventana, compartido entre las tres rutas", async () => {
     // El límite (ver limitadorAsistente en index.ts) es de 40 en 15

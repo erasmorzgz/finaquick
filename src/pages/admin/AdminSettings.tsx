@@ -15,6 +15,7 @@ import { useOrg } from "../../lib/theme/OrgContext";
 import { useAuth } from "../../lib/auth/AuthContext";
 import { useService } from "../../lib/service/ServiceContext";
 import { aplicarColorMarca } from "../../lib/theme/brand";
+import { useAvisos } from "@/lib/avisos/AvisosContext";
 
 // El restablecimiento de contraseña por un administrador solo existe
 // en el servidor propio (servidor/api).
@@ -79,6 +80,7 @@ function MarcaTab() {
   const [nombre, setNombre] = useState(org?.nombre ?? "");
   const [color, setColor] = useState(org?.colorPrimario ?? "#e87722");
   const [guardado, setGuardado] = useState(false);
+  const avisar = useAvisos();
   const [guardando, setGuardando] = useState(false);
   const [errorGuardar, setErrorGuardar] = useState<string | null>(null);
   const [servicios, setServicios] = useState<ServiceConfig[]>([]);
@@ -122,6 +124,7 @@ function MarcaTab() {
       // verdad cambiaron — ver rutas.ts.
       await db.actualizarOrganizacion(org.id, { nombre, colorPrimario: color });
       await refresh();
+      avisar({ status: "success", title: "Cambios guardados", description: "El nombre y el color de la organización ya se actualizaron." });
       setGuardado(true);
       setTimeout(() => setGuardado(false), 2000);
     } catch (err) {

@@ -52,7 +52,7 @@ export default function QuickChart({ g }: { g: Grafica }) {
   return (
     <div className="h-48 w-full">
       <ResponsiveContainer>
-        <AreaChart data={datos} margin={{ left: -20, right: 8, top: 8, bottom: 0 }}>
+        <AreaChart data={datos} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
           <defs>
             <linearGradient id="quickRevFill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="var(--color-brand-500)" stopOpacity={0.22} />
@@ -61,7 +61,7 @@ export default function QuickChart({ g }: { g: Grafica }) {
           </defs>
           <CartesianGrid vertical={false} stroke="var(--color-grid)" />
           <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: "var(--color-baseline)" }} tick={{ fill: "var(--color-text-muted)", fontSize: 10 }} />
-          <YAxis tickFormatter={compacto} tickLine={false} axisLine={false} tick={{ fill: "var(--color-text-muted)", fontSize: 10 }} width={40} />
+          <YAxis tickFormatter={compacto} tickLine={false} axisLine={false} tick={{ fill: "var(--color-text-muted)", fontSize: 10 }} width={52} />
           <Tooltip content={<QuickChartTooltip />} />
           <Area
             type="monotone"

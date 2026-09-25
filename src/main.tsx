@@ -6,6 +6,7 @@ import App from "./App";
 import { AuthProvider } from "./lib/auth/AuthContext";
 import { OrgProvider } from "./lib/theme/OrgContext";
 import { NotificationsProvider } from "./lib/notifications/NotificationsContext";
+import { AvisosProvider } from "./lib/avisos/AvisosContext";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -13,7 +14,9 @@ createRoot(document.getElementById("root")!).render(
       <AuthProvider>
         <OrgProvider>
           <NotificationsProvider>
-            <App />
+            <AvisosProvider>
+              <App />
+            </AvisosProvider>
           </NotificationsProvider>
         </OrgProvider>
       </AuthProvider>

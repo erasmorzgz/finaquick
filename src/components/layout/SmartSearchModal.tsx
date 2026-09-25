@@ -1,14 +1,17 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Sparkles, Receipt, Banknote, CreditCard, ClipboardList, TrendingUp, ArrowRight, ArrowUpRight, ArrowDownRight, Minus, Wallet, UserRound, Download, SendHorizontal } from "lucide-react";
+import { Sparkles, Receipt, Banknote, CreditCard, ClipboardList, TrendingUp, ArrowRight, ArrowUpRight, ArrowDownRight, Minus, Wallet, UserRound, Download, SendHorizontal, TriangleAlert } from "lucide-react";
+import { MessageBubble, MessageBubbleContent } from "@/components/agents/message-bubble";
+import { ThinkingShimmer } from "@/components/agents/loading-states/thinking-shimmer";
 import { Modal } from "../ui/Modal";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Avatar, Badge, EmptyState } from "../ui/Misc";
+import { useAuth } from "../../lib/auth/AuthContext";
 import { useService } from "../../lib/service/ServiceContext";
 import { useOrg } from "../../lib/theme/OrgContext";
 import * as db from "../../lib/db";
-import type { Procedimiento, Requisicion, Ticket } from "../../lib/db/types";
+import type { EstadoAsistente, Procedimiento, Requisicion, Ticket } from "../../lib/db/types";
 import { fechaEfectiva, fechaLocal, mesLocal } from "../../lib/fechaFolio";
 import { interpretarConsulta, esSaludo, type Consulta } from "../../lib/smartSearch";
 import { formatoMXN, generarCSV, descargarTexto } from "../../lib/utils";
@@ -29,6 +32,28 @@ const FORMATO_FECHA_LARGA = new Intl.DateTimeFormat("es-MX", { day: "numeric", m
 // solo complicaría el código sin que se note la diferencia.
 const RESPUESTA_SALUDO_SIN_IA =
   "¡Hola! Soy Quick. Puedo ayudarte con tus datos de folios y finanzas — pregúntame algo como \"cuánto cobré ayer\", \"resumen de este mes\" o \"folios de Ana García\".";
+
+// Preguntas de ejemplo como botones. Todas funcionan también SIN IA
+// (las reconoce src/lib/smartSearch.ts), para que ninguna sugerencia
+// termine en "No encontré nada".
+const SUGERENCIAS = [
+  "¿Cuánto cobré hoy?",
+  "Resumen de este mes",
+  "¿Qué procedimiento se vendió más este mes?",
+  "¿Cómo voy contra el mes pasado?",
+  "¿Cuál fue mi mejor mes?",
+  "Créditos pendientes",
+];
+
+// Pista para quien administra, según el código con el que Gemini
+// rechazó la última llamada (ver estadoIA en servidor/api/src/asistente.ts).
+function pistaErrorIA(codigo: number): string {
+  if (codigo === 0) return "El servidor no pudo conectarse a Google — revisa que tenga salida a internet.";
+  if (codigo === 400 || codigo === 401 || codigo === 403) return "La clave GEMINI_API_KEY no es válida o no tiene permiso — genera una nueva en Google AI Studio.";
+  if (codigo === 404) return "El modelo configurado en GEMINI_MODELO ya no existe — déjalo vacío para usar el de default.";
+  if (codigo === 429) return "Se alcanzó el límite de uso gratuito de Google — espera un rato o revisa tu cuota en Google AI Studio.";
+  return "Google respondió con un error temporal — vuelve a intentar en unos minutos.";
+}
 
 type DesgloseCorte = { total: number; grupos: { etiqueta: string; icono: typeof Banknote; tickets: Ticket[]; subtotal: number }[] };
 type ResumenMes = { total: number; folios: number; top: { nombre: string; cantidad: number; total: number }[] };
@@ -601,22 +626,35 @@ function descargarDigesto(d: Record<string, unknown>) {
 export function SmartSearchModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { servicioActual } = useService();
   const { org } = useOrg();
+  const { effectiveRole } = useAuth();
   const navigate = useNavigate();
   const [texto, setTexto] = useState("");
   const [mensajes, setMensajes] = useState<Mensaje[]>([]);
+  const [estadoIA, setEstadoIA] = useState<EstadoAsistente | null>(null);
   const finRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) setTexto("");
+    if (!open) {
+      setTexto("");
+      return;
+    }
+    db.estadoAsistente().then(setEstadoIA);
   }, [open]);
 
   useEffect(() => {
     finRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [mensajes]);
 
-  async function enviar() {
-    const pregunta = texto.trim();
-    if (!pregunta || !org) return;
+  async function enviar(preguntaDirecta?: string) {
+    await responder(preguntaDirecta);
+    // Después de cada pregunta, por si Gemini acaba de fallar (o de
+    // recuperarse) — así el aviso de arriba refleja lo que de verdad pasó.
+    db.estadoAsistente().then(setEstadoIA);
+  }
+
+  async function responder(preguntaDirecta?: string) {
+    const pregunta = (preguntaDirecta ?? texto).trim();
+    if (!pregunta || !org || !servicioActual) return;
     setTexto("");
     const idUsuario = crypto.randomUUID();
     const idAsistente = crypto.randomUUID();
@@ -758,31 +796,75 @@ export function SmartSearchModal({ open, onClose }: { open: boolean; onClose: ()
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Quick" width={560}>
-      <div className="flex max-h-[70vh] min-h-[320px] flex-col">
+    <Modal open={open} onClose={onClose} title="Quick" width={600}>
+      <div className="flex max-h-[72vh] min-h-[360px] flex-col">
+        <AvisoIA estado={estadoIA} esAdmin={effectiveRole === "admin"} />
         <div className="-mx-1 mb-3 flex-1 overflow-y-auto px-1">
-          {mensajes.length === 0 ? (
+          {!servicioActual ? (
+            // Sin servicio abierto (p. ej. un admin en Finanzas), Quick no
+            // tiene folios que leer — antes contestaba "Sin pagos" a todo.
             <EmptyState
               icon={<Sparkles size={24} strokeWidth={1.75} />}
-              title="Hola, soy Quick"
-              hint='Pregúntame casi cualquier cosa de tus propios datos — cortes de caja, resúmenes, comparaciones, gráficas, "mi mejor día de agosto", "cuánto se cobró en efectivo este mes". Puedes hacer preguntas de seguimiento sin repetir el contexto. Nunca modifico nada, nunca hablo de código, y cada respuesta se puede descargar.'
-            />
+              title="Elige un servicio primero"
+              hint="Quick contesta sobre los datos del servicio que tengas abierto."
+            >
+              <Button
+                className="mt-4"
+                icon={<ArrowRight size={16} />}
+                onClick={() => {
+                  navigate("/app/servicios");
+                  onClose();
+                }}
+              >
+                Elegir servicio
+              </Button>
+            </EmptyState>
+          ) : mensajes.length === 0 ? (
+            <>
+              <EmptyState
+                icon={<Sparkles size={24} strokeWidth={1.75} />}
+                title="Hola, soy Quick"
+                hint={
+                  estadoIA?.estado === "lista"
+                    ? "Pregúntame lo que quieras sobre tus propios datos, con tus palabras — cortes, resúmenes, comparaciones, gráficas, personas. Entiendo preguntas de seguimiento sin repetir el contexto. Nunca modifico nada, y cada respuesta se puede descargar."
+                    : "Pregúntame por tus cortes, resúmenes, comparaciones, gráficas y créditos. Nunca modifico nada, y cada respuesta se puede descargar."
+                }
+              />
+              <div className="-mt-8 flex flex-wrap justify-center gap-2 px-2 pb-2">
+                {SUGERENCIAS.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => enviar(s)}
+                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-1.5 text-xs font-semibold text-[var(--color-text-secondary)] transition-[background-color,color,border-color,transform] duration-150 ease-out-emil hover:border-brand-300 hover:text-brand-700 active:scale-[0.97] dark:hover:text-brand-300"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </>
           ) : (
             <div className="flex flex-col gap-3">
               {mensajes.map((m) =>
                 m.rol === "usuario" ? (
-                  <div key={m.id} className="flex justify-end">
-                    <p className="animate-pop-in max-w-[85%] rounded-2xl rounded-br-sm bg-[var(--color-brand-500)] px-3.5 py-2 text-sm font-medium text-white">{m.texto}</p>
-                  </div>
+                  <MessageBubble key={m.id} align="end" variant="solid" animateIn className="bubble-brand">
+                    <MessageBubbleContent className="rounded-br-md font-medium">{m.texto}</MessageBubbleContent>
+                  </MessageBubble>
                 ) : (
-                  <div key={m.id} className="animate-pop-in flex items-start gap-2">
-                    <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-[var(--color-brand-500)] text-white">
+                  <div key={m.id} className="flex items-start gap-2">
+                    <div className="material-brand mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-white">
                       <Sparkles size={13} />
                     </div>
-                    <div className="max-w-[88%] rounded-2xl rounded-tl-sm bg-black/[0.03] px-3.5 py-3 dark:bg-white/[0.05]">
-                      <p className="mb-1.5 text-[11px] font-bold text-[var(--color-text-muted)]">Quick</p>
-                      <RespuestaAsistente mensaje={m} onIrACierre={irACierre} />
-                    </div>
+                    <MessageBubble align="start" variant="soft" animateIn className="min-w-0 flex-1">
+                      <MessageBubbleContent className="w-full max-w-[94%] rounded-tl-md py-3">
+                        <p className="mb-1.5 text-[11px] font-bold text-[var(--color-text-muted)]">Quick</p>
+                        <RespuestaAsistente
+                          mensaje={m}
+                          onIrACierre={irACierre}
+                          etiquetaCarga={estadoIA?.estado === "lista" ? "Pensando…" : "Buscando en tus datos…"}
+                        />
+                      </MessageBubbleContent>
+                    </MessageBubble>
                   </div>
                 )
               )}
@@ -800,14 +882,16 @@ export function SmartSearchModal({ open, onClose }: { open: boolean; onClose: ()
         >
           <input
             className="min-w-0 flex-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-brand-400"
-            placeholder="Escribe tu pregunta…"
+            placeholder={servicioActual ? "Escribe tu pregunta…" : "Elige un servicio para preguntar"}
             value={texto}
             onChange={(e) => setTexto(e.target.value)}
+            disabled={!servicioActual}
             autoFocus
           />
           <button
             type="submit"
-            disabled={!texto.trim()}
+            aria-label="Enviar pregunta"
+            disabled={!texto.trim() || !servicioActual}
             className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[var(--color-brand-500)] text-white transition-transform duration-150 ease-out-emil hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
           >
             <SendHorizontal size={16} />
@@ -818,27 +902,64 @@ export function SmartSearchModal({ open, onClose }: { open: boolean; onClose: ()
   );
 }
 
-// Tres puntos rebotando en cadena, mientras Quick resuelve la
-// pregunta (por patrones o, si está configurada, por IA) — el mismo
-// lenguaje visual que cualquier chat: confirma que "sí escuchó" y que
-// algo sigue en curso, sin poner un texto distinto cada vez.
-function PuntosPensando() {
+// Si Quick tiene la IA disponible, dicho de frente — antes, sin IA (o
+// con una clave inválida), Quick simplemente "entendía menos" sin que
+// nadie supiera por qué. Solo quien administra ve cómo arreglarlo.
+function AvisoIA({ estado, esAdmin }: { estado: EstadoAsistente | null; esAdmin: boolean }) {
+  if (!estado) return <div className="mb-3 h-6" aria-hidden="true" />;
+
+  if (estado.estado === "lista") {
+    return (
+      <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-[var(--color-text-muted)]">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full rounded-full bg-[color:var(--color-good)] opacity-40 motion-safe:animate-ping" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-[color:var(--color-good)]" />
+        </span>
+        IA conectada — entiendo preguntas libres
+      </div>
+    );
+  }
+
+  const esError = estado.estado === "error";
   return (
-    <div className="flex items-center gap-1 py-1">
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="animate-dot-bounce h-1.5 w-1.5 rounded-full bg-[var(--color-text-muted)]"
-          style={{ animationDelay: `${i * 0.15}s` }}
-        />
-      ))}
+    <div
+      role="status"
+      className={
+        esError
+          ? "mb-3 flex gap-2.5 rounded-xl bg-[color:var(--color-critical)]/10 px-3.5 py-2.5 text-xs text-[var(--color-text-primary)]"
+          : "mb-3 flex gap-2.5 rounded-xl bg-[color:var(--color-warning)]/15 px-3.5 py-2.5 text-xs text-[var(--color-text-primary)]"
+      }
+    >
+      <TriangleAlert size={15} className={esError ? "mt-px flex-shrink-0 text-[color:var(--color-critical)]" : "mt-px flex-shrink-0 text-amber-700 dark:text-amber-400"} />
+      <div>
+        <p className="font-bold">
+          {esError ? "La IA no respondió — contesté en modo básico" : "Modo básico: sin IA conectada"}
+        </p>
+        <p className="mt-0.5 text-[var(--color-text-secondary)]">
+          {esError
+            ? "Mientras tanto entiendo las preguntas más comunes, como las sugerencias de abajo."
+            : "Entiendo las preguntas más comunes, como las sugerencias de abajo, pero no preguntas libres."}
+          {esAdmin &&
+            (esError
+              ? ` ${pistaErrorIA(estado.codigo)} (código ${estado.codigo})`
+              : " Para activarla, agrega GEMINI_API_KEY en servidor/api/.env y reinicia el servidor (ver LOCAL_SETUP.md).")}
+        </p>
+      </div>
     </div>
   );
 }
 
-function RespuestaAsistente({ mensaje: m, onIrACierre }: { mensaje: MensajeAsistente; onIrACierre: (fecha: string) => void }) {
+function RespuestaAsistente({
+  mensaje: m,
+  onIrACierre,
+  etiquetaCarga,
+}: {
+  mensaje: MensajeAsistente;
+  onIrACierre: (fecha: string) => void;
+  etiquetaCarga: string;
+}) {
   if (m.cargando) {
-    return <PuntosPensando />;
+    return <ThinkingShimmer className="text-sm">{etiquetaCarga}</ThinkingShimmer>;
   }
 
   // Chat libre: Gemini contestó directamente, sin pasar por ninguna de
@@ -998,7 +1119,7 @@ function RespuestaAsistente({ mensaje: m, onIrACierre }: { mensaje: MensajeAsist
         <p className="text-sm text-[var(--color-text-primary)]">
           {m.narracion ?? (g.proyeccion.length > 0 ? "Así van tus ingresos, con una proyección de los próximos meses:" : "Así van tus ingresos:")}
         </p>
-        <Suspense fallback={<div className="flex h-48 w-full items-center justify-center"><PuntosPensando /></div>}>
+        <Suspense fallback={<div className="flex h-48 w-full items-center justify-center"><ThinkingShimmer className="text-sm">Dibujando la gráfica…</ThinkingShimmer></div>}>
           <QuickChart g={g} />
         </Suspense>
         {g.proyeccion.length > 0 && (

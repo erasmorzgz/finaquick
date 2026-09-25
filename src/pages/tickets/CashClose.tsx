@@ -17,6 +17,7 @@ import { formatoMXN, generarCSV } from "../../lib/utils";
 // que esta pantalla, sin arrastrar la pantalla completa a su paquete
 // — ver el comentario en fechaFolio.ts.
 import { fechaLocal, fechaEfectiva, mesLocal } from "../../lib/fechaFolio";
+import { AnimatedNumber } from "@/components/motion/animated-number";
 
 const FORMATO_MES = new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric" });
 function mesLabel(mes: string) {
@@ -233,7 +234,7 @@ export default function CashClose() {
                   <StatCard
                     key={g.forma}
                     label={g.forma}
-                    value={formatoMXN(g.subtotal)}
+                    value={<AnimatedNumber value={g.subtotal} from={g.subtotal} format={formatoMXN} startOnView={false} duration={0.4} />}
                     sub={`${g.tickets.filter((t) => incluidos.has(t.id)).length} transacción(es)`}
                     icon={<Icono size={16} className="text-brand-500" />}
                   />
@@ -242,7 +243,7 @@ export default function CashClose() {
               <StatCard
                 className="border-2 border-brand-500"
                 label="Total general"
-                value={formatoMXN(total)}
+                value={<AnimatedNumber value={total} from={total} format={formatoMXN} startOnView={false} duration={0.4} />}
                 sub={`${seleccionados.length} transacción(es)`}
               />
             </div>
@@ -331,7 +332,7 @@ export default function CashClose() {
           />
 
           <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <StatCard className="border-2 border-brand-500" label={`Total ${mesLabel(mesVista)}`} value={formatoMXN(totalMes)} />
+            <StatCard className="border-2 border-brand-500" label={`Total ${mesLabel(mesVista)}`} value={<AnimatedNumber value={totalMes} from={totalMes} format={formatoMXN} startOnView={false} duration={0.4} />} />
             <StatCard label="Folios pagados" value={delMes.length} icon={<Receipt size={16} className="text-brand-500" />} />
             <StatCard label="Procedimientos distintos" value={porProcedimiento.length} icon={<ClipboardList size={16} className="text-brand-500" />} />
           </div>

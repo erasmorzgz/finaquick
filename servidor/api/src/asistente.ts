@@ -220,31 +220,68 @@ function extraerJson(texto: string): unknown {
 // como este (revisar condiciones vigentes en ai.google.dev). La clave
 // va en la URL (así lo pide Google, no por elección de este archivo),
 // nunca en un encabezado.
+const MODELO_GEMINI = GEMINI_MODELO || "gemini-2.5-flash";
+
+// Resultado de la llamada más reciente a Gemini, solo para el indicador
+// de estado de Quick (ver estadoIA). Sin esto, una clave inválida o un
+// modelo ya retirado por Google se veían exactamente igual que "sin IA":
+// todo caía a los patrones fijos sin que nadie supiera por qué.
+let ultimaLlamada: { ok: true } | { ok: false; codigo: number } | null = null;
+
 async function preguntarGemini(
   instruccion: string,
   texto: string,
   opciones: { json: boolean; temperatura: number; maxTokens: number }
 ): Promise<string | null> {
-  const modelo = GEMINI_MODELO || "gemini-2.0-flash";
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: instruccion }] },
-        contents: [{ parts: [{ text: texto }] }],
-        generationConfig: {
-          temperature: opciones.temperatura,
-          maxOutputTokens: opciones.maxTokens,
-          ...(opciones.json ? { responseMimeType: "application/json" } : {}),
-        },
-      }),
-    }
-  );
-  if (!res.ok) return null;
+  let res: Response;
+  try {
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODELO_GEMINI}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: instruccion }] },
+          contents: [{ parts: [{ text: texto }] }],
+          generationConfig: {
+            temperature: opciones.temperatura,
+            maxOutputTokens: opciones.maxTokens,
+            ...(opciones.json ? { responseMimeType: "application/json" } : {}),
+            // Los modelos 2.5 "piensan" antes de contestar por default, y
+            // ese razonamiento se descuenta de maxOutputTokens — con los
+            // límites cortos de aquí, se lo comía completo y la
+            // respuesta llegaba vacía.
+            ...(/gemini-2\.5-flash/.test(MODELO_GEMINI) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+          },
+        }),
+      }
+    );
+  } catch {
+    ultimaLlamada = { ok: false, codigo: 0 };
+    return null;
+  }
+  if (!res.ok) {
+    ultimaLlamada = { ok: false, codigo: res.status };
+    return null;
+  }
+  ultimaLlamada = { ok: true };
   const data = (await res.json()) as any;
   return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
+}
+
+export type EstadoIA =
+  | { estado: "sin-configurar" }
+  | { estado: "lista"; modelo: string }
+  | { estado: "error"; modelo: string; codigo: number };
+
+/** Para el indicador de Quick. "lista" cubre tanto "ya contestó bien"
+ * como "configurada pero aún sin usarse". `codigo` es el estado HTTP con
+ * el que Gemini rechazó la última llamada (0 = no se pudo conectar);
+ * nunca incluye la clave ni el cuerpo de la respuesta. */
+export function estadoIA(): EstadoIA {
+  if (!iaConfigurada) return { estado: "sin-configurar" };
+  if (ultimaLlamada && !ultimaLlamada.ok) return { estado: "error", modelo: MODELO_GEMINI, codigo: ultimaLlamada.codigo };
+  return { estado: "lista", modelo: MODELO_GEMINI };
 }
 
 /** Punto de entrada — nunca lanza: cualquier problema (sin configurar,

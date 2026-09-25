@@ -1,3 +1,12 @@
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+// Combina clases de Tailwind resolviendo conflictos — la usan los
+// componentes de beUI (src/components/motion, src/components/agents).
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
 export function formatoMXN(valor: number): string {
   return valor.toLocaleString("es-MX", { style: "currency", currency: "MXN" });
 }

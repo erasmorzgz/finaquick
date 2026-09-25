@@ -110,6 +110,35 @@
   --radius-control: 10px;
 }
 
+/* Tokens estilo shadcn que usan los componentes de beUI
+   (src/components/motion, src/components/agents), traducidos al tema de
+   Finaquick. `inline` hace que cada utilidad apunte directo a la
+   variable de origen, así el modo oscuro (que redefine esas variables
+   en `html.dark body`) y el color de marca configurable se respetan
+   sin duplicar nada. */
+@theme inline {
+  --color-background: var(--color-surface);
+  --color-foreground: var(--color-text-primary);
+  --color-card: var(--color-surface);
+  --color-card-foreground: var(--color-text-primary);
+  --color-muted: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+  --color-muted-foreground: var(--color-text-muted);
+  --color-primary: var(--color-brand-600);
+  --color-primary-foreground: #ffffff;
+  --color-ring: var(--color-brand-500);
+  --color-destructive: var(--color-critical);
+}
+
+/* Barrido de brillo de TextShimmer / ThinkingShimmer (beUI). Vive aquí en
+   vez de en una etiqueta <style> dentro del componente. */
+@keyframes beui-text-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .beui-text-shimmer { animation: none !important; }
+}
+
 @layer base {
   html {
     color-scheme: light;
@@ -120,6 +149,9 @@
   body {
     @apply bg-[var(--color-page)] text-[var(--color-text-primary)] antialiased;
     font-feature-settings: "cv11", "ss01";
+    /* Nombres crudos que TextShimmer (beUI) lee directo con var(). */
+    --foreground: var(--color-text-primary);
+    --muted-foreground: var(--color-text-muted);
   }
   html.dark body {
     --color-page: #0d0d0d;
@@ -186,15 +218,6 @@
   from { opacity: 0; transform: translateX(12px); }
   to { opacity: 1; transform: none; }
 }
-/* Los tres puntos de "Quick está pensando" — un rebote continuo, no
-   algo que dispare el usuario, así que sí amerita @keyframes en vez de
-   una transición (ver el punto de "constante/progreso" del criterio de
-   animación del proyecto). ease-in-out porque el punto sube Y baja en
-   el mismo ciclo, no solo entra una vez. */
-@keyframes dot-bounce {
-  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
-  30% { transform: translateY(-4px); opacity: 1; }
-}
 
 /* prefers-reduced-motion: menos y más suave, NO cero — apagar TODA
    animación (duración 0.01ms global) también apaga el fundido de
@@ -210,13 +233,6 @@
   .animate-slide-in-right {
     animation: none !important;
     transition-property: opacity, background-color, color !important;
-    transform: none !important;
-  }
-  /* Los puntos de "pensando" se quedan animados (es justo la señal de
-     que algo sigue en curso) pero sin el rebote — solo un parpadeo de
-     opacidad, más lento. */
-  .animate-dot-bounce {
-    animation: fade-in 1.4s ease-in-out infinite alternate;
     transform: none !important;
   }
 }
@@ -408,7 +424,6 @@
   .animate-fade-in { animation: fade-in 0.15s ease; }
   .animate-pop-in { animation: pop-in 0.18s cubic-bezier(.2,.9,.3,1); }
   .animate-slide-in-right { animation: slide-in-right 0.2s ease; }
-  .animate-dot-bounce { animation: dot-bounce 1.1s ease-in-out infinite; }
   .tabular {
     font-variant-numeric: tabular-nums;
   }
@@ -419,5 +434,13 @@
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background: var(--color-border);
     border-radius: 8px;
+  }
+
+  /* Burbuja "solid" de MessageBubble (beUI) en color de marca: esa
+     variante pinta con foreground/background, así que basta redefinirlos
+     para el subárbol. brand-600 con texto blanco pasa AA. */
+  .bubble-brand {
+    --color-text-primary: var(--color-brand-600);
+    --color-surface: #ffffff;
   }
 }

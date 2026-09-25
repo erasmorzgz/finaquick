@@ -20,7 +20,7 @@ import {
 } from "./auth.js";
 import type { RequestConUsuario } from "./auth.js";
 import { mandarCorreo, correoConfigurado, escaparHtml } from "./correo.js";
-import { interpretarConIA, narrarResultado, responderChatLibre } from "./asistente.js";
+import { interpretarConIA, narrarResultado, responderChatLibre, estadoIA } from "./asistente.js";
 import * as registro from "./registro.js";
 
 export const rutas = Router();
@@ -2015,6 +2015,14 @@ rutas.post("/asistente/chat", requerirSesion, async (req: RequestConUsuario, res
   const texto = await responderChatLibre(req.body.texto, historial, req.body?.digesto);
   if (!texto) return res.status(204).end();
   res.json({ texto });
+});
+
+// Si Quick tiene la IA disponible, para mostrarlo en su encabezado en
+// vez de que el usuario lo adivine por cómo contesta. Fuera de
+// /api/asistente a propósito: no llama a Gemini, así que no debe
+// gastar el cupo del limitador de las preguntas reales.
+rutas.get("/estado-asistente", requerirSesion, (_req: RequestConUsuario, res) => {
+  res.json(estadoIA());
 });
 
 // ---------- Requisiciones (solicitud interna de compra/material) ----------

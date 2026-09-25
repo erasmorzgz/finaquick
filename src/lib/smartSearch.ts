@@ -35,6 +35,11 @@ function formatoMes(d: Date): string {
  * enero" en diciembre como una fecha once meses en el futuro). */
 function extraerFecha(texto: string, ahora: Date): string | null {
   if (/\bhoy\b/.test(texto)) return formatoFecha(ahora);
+  if (/\b(antier|anteayer|antes\s+de\s+ayer)\b/.test(texto)) {
+    const d = new Date(ahora);
+    d.setDate(d.getDate() - 2);
+    return formatoFecha(d);
+  }
   if (/\bayer\b/.test(texto)) {
     const d = new Date(ahora);
     d.setDate(d.getDate() - 1);
@@ -166,8 +171,28 @@ function extraerComparacion(ahora: Date): { mesA: string; mesB: string } {
  * que a diferencia de una búsqueda normal regresa un total agregado en
  * vez de una lista de folios. */
 function extraerNombrePersona(textoOriginal: string): string {
-  const conDe = textoOriginal.match(/(?:cuanto\s+ha\s+(?:pagado|gastado|debe)\s+|cuanto\s+debe\s+|de\s+)(.+)/i);
+  const conDe = textoOriginal.match(/(?:cu[aá]nto\s+ha\s+(?:pagado|gastado|debe)\s+|cu[aá]nto\s+debe\s+|de\s+)(.+)/i);
   return (conDe ? conDe[1] : textoOriginal).trim();
+}
+
+/** "esta semana" (lunes a hoy) o "semana pasada" (lunes a domingo). */
+function extraerSemana(texto: string, ahora: Date): { desde: string; hasta: string } | null {
+  const lunesDe = (d: Date) => {
+    const l = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    l.setDate(l.getDate() - ((l.getDay() + 6) % 7));
+    return l;
+  };
+  if (/\besta\s+semana\b/.test(texto)) {
+    return { desde: formatoFecha(lunesDe(ahora)), hasta: formatoFecha(ahora) };
+  }
+  if (/\bsemana\s+pasada\b|\bla\s+semana\s+anterior\b/.test(texto)) {
+    const lunes = lunesDe(ahora);
+    lunes.setDate(lunes.getDate() - 7);
+    const domingo = new Date(lunes);
+    domingo.setDate(domingo.getDate() + 6);
+    return { desde: formatoFecha(lunes), hasta: formatoFecha(domingo) };
+  }
+  return null;
 }
 
 function extraerMetrica(texto: string): MetricaEstadistica {
@@ -193,7 +218,13 @@ export function esSaludo(textoOriginal: string): boolean {
   return SALUDOS.includes(texto);
 }
 
-export function interpretarConsulta(textoOriginal: string, ahora: Date = new Date()): Consulta {
+// Un saludo AL INICIO de una pregunta real ("hola, cuánto cobré ayer")
+// se descarta antes de interpretar — si no, "hola" terminaba como parte
+// del nombre a buscar.
+const SALUDO_INICIAL = /^[¡¿\s]*(hola|hey|buen[oa]s?\s+(d[ií]as|tardes|noches)|buenas|buen\s+d[ií]a|qu[eé]\s+tal|saludos)\b[\s,!.:;]*/i;
+
+export function interpretarConsulta(textoConSaludo: string, ahora: Date = new Date()): Consulta {
+  const textoOriginal = textoConSaludo.trim().replace(SALUDO_INICIAL, "") || textoConSaludo.trim();
   const texto = sinAcentos(textoOriginal.toLowerCase().trim());
 
   const esCorte = /\bcorte(s)?\s+de\s+caja\b|\bcierre(s)?\s+de\s+caja\b/.test(texto);
@@ -232,7 +263,7 @@ export function interpretarConsulta(textoOriginal: string, ahora: Date = new Dat
   // pasado", "cuánto crecí" — se revisa antes de "creditos"/"persona"
   // porque "comparado", "respecto" y "crecimiento" no tienen sentido
   // como nombre de persona ni como pregunta de créditos.
-  const esComparacion = /\bcompara(r|d[oa]|ci[oó]n)?\b|\brespecto\s+al?\s+mes\s+pasado\b|\bcrec(i| imiento)\b|\bmejor[oó]|\bempeor[oó]/.test(texto);
+  const esComparacion = /\bcompara(r|d[oa]|ci[oó]n)?\b|\brespecto\s+al?\s+mes\s+pasado\b|\bcrec(i| imiento)\b|\bmejor[oó]|\bempeor[oó]|\bcomo\s+(voy|vamos)\b/.test(texto);
   if (esComparacion) {
     return { tipo: "comparacion", ...extraerComparacion(ahora) };
   }
@@ -253,6 +284,48 @@ export function interpretarConsulta(textoOriginal: string, ahora: Date = new Dat
   const esPersona = /\bcuanto\s+(ha\s+)?(pagado|gastado|debe)\b/.test(texto);
   if (esPersona) {
     return { tipo: "persona", nombre: extraerNombrePersona(textoOriginal) };
+  }
+
+  // "qué procedimiento se vendió más", "lo más vendido", "top de
+  // procedimientos" — el ranking de procedimientos del rango pedido.
+  const esTopProcedimientos =
+    /\bprocedimientos?\b.*\b(mas|top)\b|\b(mas|top)\b.*\bprocedimientos?\b|\bmas\s+vendid[oa]s?\b|\bse\s+vend(e|io|ieron)\s+mas\b/.test(texto);
+  if (esTopProcedimientos) {
+    const { desde, hasta } = extraerSemana(texto, ahora) ?? extraerRango(texto, ahora);
+    return { tipo: "estadistica", metrica: "top_procedimientos", desde, hasta };
+  }
+
+  // "cuál fue mi mejor mes", "el peor mes del año" — no hay agrupación
+  // por mes en "libre", así que se contesta con la gráfica de un año,
+  // donde el mes más alto y el más bajo se ven de un vistazo.
+  if (/\b(mejor|peor)\s+mes\b/.test(texto)) {
+    return { tipo: "grafica", meses: 12, proyectar: false };
+  }
+
+  // "cuánto cobré ayer", "cuánto vendimos esta semana", "cuánto se
+  // cobró en efectivo este mes", "ingresos de hoy" — la forma más
+  // natural de preguntar por dinero. El periodo decide la respuesta: un
+  // día da su corte de caja, una semana el total día por día, un mes su
+  // resumen, y un año (o una forma de pago) sus estadísticas.
+  const esMonto =
+    /\bcuanto\s+(se\s+|he\s+|hemos\s+|llevo\s+|llevamos\s+)?(cobr|vend|gan|ingres|factur|entr|hic|junt|genere|generamos)\w*/.test(texto) ||
+    /\b(ingresos|ventas|cobros|ganancias|ingrese|vendi|cobre)\b/.test(texto) ||
+    /\bcuanto\s+(llevo|llevamos|va|vamos)\b/.test(texto);
+  if (esMonto) {
+    if (/\befectivo\b|\btarjeta\b/.test(texto)) {
+      const { desde, hasta } = extraerSemana(texto, ahora) ?? extraerRango(texto, ahora);
+      return { tipo: "estadistica", metrica: "formas_pago", desde, hasta };
+    }
+    const fecha = extraerFecha(texto, ahora);
+    if (fecha) return { tipo: "corte", fecha };
+    const semana = extraerSemana(texto, ahora);
+    if (semana) return { tipo: "libre", ...semana, metrica: "total", agruparPor: "dia" };
+    const mes = extraerMes(texto, ahora);
+    if (mes) return { tipo: "resumen", mes };
+    if (/\beste\s+a[nñ]o\b|\b20\d{2}\b/.test(texto)) {
+      return { tipo: "estadistica", metrica: "total", ...extraerRango(texto, ahora) };
+    }
+    return { tipo: "corte", fecha: formatoFecha(ahora) };
   }
 
   // "mi mejor día de agosto", "el peor día de este mes", "por

@@ -69,6 +69,7 @@ export const buscarFolioGlobal = modo.buscarFolioGlobal;
 export const interpretarConsultaIA = modo.interpretarConsultaIA;
 export const narrarResultado = modo.narrarResultado;
 export const chatLibre = modo.chatLibre;
+export const estadoAsistente = modo.estadoAsistente;
 
 export const listarRequisiciones = modo.listarRequisiciones;
 export const crearRequisicion = modo.crearRequisicion;

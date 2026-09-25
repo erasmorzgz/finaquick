@@ -338,9 +338,16 @@ GEMINI_MODELO=
 ```
 
 `GEMINI_MODELO` se puede dejar vacío — usa un modelo rápido y
-económico por default (`gemini-2.0-flash` al momento de escribir
+económico por default (`gemini-2.5-flash` al momento de escribir
 esto). Solo hace falta ponerlo si algún día Google retira ese modelo o
 se prefiere uno distinto.
+
+3. Reinicia el servidor (el `.env` solo se lee al arrancar) y abre
+   Quick: arriba debe decir **"IA conectada"**. Si dice "Modo básico",
+   la clave no se cargó; si dice "La IA no respondió", Google rechazó
+   la llamada — con una cuenta de administrador, el mismo aviso dice
+   la causa probable (clave inválida, modelo retirado, límite de uso o
+   sin conexión a internet).
 
 **Qué datos salen de la institución, y qué no** — importante para
 decidir si activar esto: con `GEMINI_API_KEY` puesta, cada pregunta a

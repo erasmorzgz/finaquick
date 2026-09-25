@@ -5,6 +5,7 @@
 import type {
   ArchivoEnviado,
   CategoriaServicio,
+  EstadoAsistente,
   EstadoRequisicion,
   EventoAuditoria,
   FormaPago,
@@ -421,6 +422,18 @@ export async function chatLibre(texto: string, historial: string[], digesto: Rec
     return typeof data?.texto === "string" ? data.texto : null;
   } catch {
     return null;
+  }
+}
+
+// Nunca lanza: si el servidor no contesta, se reporta como sin IA —
+// Quick ya sabe trabajar en modo básico.
+export async function estadoAsistente(): Promise<EstadoAsistente> {
+  try {
+    const res = await fetch(`${URL_BASE}/estado-asistente`, { credentials: "include" });
+    if (!res.ok) return { estado: "sin-configurar" };
+    return (await res.json()) as EstadoAsistente;
+  } catch {
+    return { estado: "sin-configurar" };
   }
 }
 

@@ -27,6 +27,7 @@ import type {
 } from "../../lib/db/types";
 import { formatoMXN } from "../../lib/utils";
 import { useOrg } from "../../lib/theme/OrgContext";
+import { AnimatedNumber } from "@/components/motion/animated-number";
 
 // Orden fijo de colores por categoría — nunca se reasigna, para que la
 // misma categoría se vea siempre del mismo color entre una gráfica y otra.
@@ -213,15 +214,15 @@ export default function FinanceDashboard() {
           className="xl:col-span-2"
           hero
           label="Ingresos del mes"
-          value={compact(mesActualTotal)}
+          value={<AnimatedNumber value={mesActualTotal} format={compact} duration={0.9} />}
           icon={<TrendingUp size={18} className="text-white/80" />}
           delta={deltaMes === null ? null : { value: `${Math.abs(deltaMes).toFixed(1)}%`, positive: deltaMes >= 0 }}
           sub={`Acumulado 6 meses: ${compact(totalGeneralHistorico)}`}
         />
-        <StatCard label="Créditos pendientes" value={compact(pendienteCreditos)} icon={<Wallet size={16} className="text-brand-500" />} />
+        <StatCard label="Créditos pendientes" value={<AnimatedNumber value={pendienteCreditos} format={compact} duration={0.9} />} icon={<Wallet size={16} className="text-brand-500" />} />
         <StatCard
           label="Servicios activos"
-          value={servicios.filter((s) => s.activo).length}
+          value={<AnimatedNumber value={servicios.filter((s) => s.activo).length} duration={0.9} />}
           icon={<TrendingUp size={16} className="text-brand-500" />}
         />
       </div>

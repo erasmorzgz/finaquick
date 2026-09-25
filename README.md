@@ -44,7 +44,10 @@ Google Gemini, para Quick (ver [`SECURITY.md`](SECURITY.md)).
 
 ## Arquitectura
 
-- **Frontend**: React, TypeScript, Vite, Tailwind CSS.
+- **Frontend**: React, TypeScript, Vite, Tailwind CSS. Animaciones con
+  `motion` y componentes de [beUI](https://beui.dev) copiados como
+  código fuente (`src/components/motion`, `src/components/agents`) y
+  adaptados al tema propio.
 - **Servidor**: Node.js y Express, con PostgreSQL como base de datos.
 - **Capa de datos**: toda la aplicación accede a la información a través
   de un único módulo (`src/lib/db/`) — ninguna pantalla toca la base de

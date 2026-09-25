@@ -647,6 +647,15 @@ es la única forma de usar Quick, y su ausencia nunca rompe nada más.
   el navegador cae de vuelta a su propio flujo sin IA, sin que se note
   ningún error — un proveedor externo fallando nunca debe verse como
   si el sistema mismo estuviera roto.
+- **Pero el estado sí se muestra**: `GET /api/estado-asistente` (con
+  sesión iniciada, fuera del límite de arriba porque no llama a
+  Gemini) le dice a Quick si la IA está sin configurar, lista, o si
+  Google rechazó la última llamada — así Quick avisa "Modo básico" o
+  "La IA no respondió" en vez de simplemente entender menos sin
+  explicación. Solo expone el nombre del modelo y el código HTTP de la
+  última falla (0 = sin conexión) — nunca la clave ni el contenido de
+  ninguna respuesta. La pista de cómo arreglarlo solo se le muestra a
+  quien administra.
 - **Cobertura de pruebas honesta**: la suite automatizada (ver
   `test/asistente.test.ts`) corre sin `GEMINI_API_KEY` — cubre la
   validación de entrada de las tres rutas, que exigen sesión iniciada,

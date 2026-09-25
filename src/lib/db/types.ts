@@ -261,3 +261,11 @@ export interface ArchivoEnviado {
   fecha: string; // ISO
   leido: boolean;
 }
+
+// Si Quick tiene la IA (Gemini) disponible en el servidor — ver
+// estadoIA en servidor/api/src/asistente.ts. `codigo` es el estado HTTP
+// con el que Gemini rechazó la última llamada (0 = sin conexión).
+export type EstadoAsistente =
+  | { estado: "sin-configurar" }
+  | { estado: "lista"; modelo: string }
+  | { estado: "error"; modelo: string; codigo: number };

@@ -9,6 +9,7 @@ import { useService } from "../../lib/service/ServiceContext";
 import { useAuth } from "../../lib/auth/AuthContext";
 import * as db from "../../lib/db";
 import type { Requisicion } from "../../lib/db/types";
+import { useAvisos } from "@/lib/avisos/AvisosContext";
 
 const ESTADO_TONE = { pendiente: "warning", aprobada: "good", rechazada: "critical" } as const;
 const ESTADO_LABEL = { pendiente: "Pendiente", aprobada: "Aprobada", rechazada: "Rechazada" } as const;
@@ -110,6 +111,7 @@ function NuevaRequisicionModal({
   const [notas, setNotas] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const avisar = useAvisos();
 
   useEffect(() => {
     if (open) { setConcepto(""); setCantidad(1); setNotas(""); setError(null); }
@@ -121,6 +123,7 @@ function NuevaRequisicionModal({
     try {
       await db.crearRequisicion({ servicioId, concepto: concepto.trim(), cantidad, notas: notas.trim() || undefined });
       onCreada();
+      avisar({ status: "success", title: "Requisición enviada", description: concepto.trim() });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo crear la requisición.");
     } finally {
@@ -165,6 +168,7 @@ function DetalleRequisicionModal({
   const [motivoRechazo, setMotivoRechazo] = useState("");
   const [procesando, setProcesando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const avisar = useAvisos();
 
   useEffect(() => {
     setConFirma(tieneFirma);
@@ -181,6 +185,7 @@ function DetalleRequisicionModal({
     try {
       await db.resolverRequisicion(r!.id, "aprobada", { conFirma });
       onResuelta();
+      avisar({ status: "success", title: "Requisición aprobada", description: r!.concepto });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo aprobar.");
     } finally {
@@ -194,6 +199,7 @@ function DetalleRequisicionModal({
     try {
       await db.resolverRequisicion(r!.id, "rechazada", { motivoRechazo: motivoRechazo.trim() || undefined });
       onResuelta();
+      avisar({ status: "neutral", title: "Requisición rechazada", description: r!.concepto });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo rechazar.");
     } finally {

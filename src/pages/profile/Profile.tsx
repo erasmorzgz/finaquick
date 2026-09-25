@@ -11,6 +11,7 @@ import { useOrg } from "../../lib/theme/OrgContext";
 import * as db from "../../lib/db";
 import type { ServiceConfig } from "../../lib/db/types";
 import { URL_BASE } from "../../lib/db/localApiAdapter";
+import { useAvisos } from "@/lib/avisos/AvisosContext";
 
 const ROLE_LABEL: Record<string, string> = { admin: "Administrador", finanzas: "Finanzas", personal: "Personal" };
 
@@ -28,6 +29,7 @@ export default function Profile() {
   const [firmaUrl, setFirmaUrl] = useState(user?.firmaUrl);
   const [servicios, setServicios] = useState<ServiceConfig[]>([]);
   const [guardado, setGuardado] = useState(false);
+  const avisar = useAvisos();
   const [guardando, setGuardando] = useState(false);
   const [errorGuardar, setErrorGuardar] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -58,6 +60,7 @@ export default function Profile() {
     try {
       await db.actualizarPerfil(user.id, { nombre, telefono, bio, fotoUrl, firmaUrl });
       await refresh();
+      avisar({ status: "success", title: "Perfil actualizado" });
       setGuardado(true);
       setTimeout(() => setGuardado(false), 2000);
     } catch (err) {

@@ -11,6 +11,7 @@ import { useAuth } from "../../lib/auth/AuthContext";
 import * as db from "../../lib/db";
 import type { FormaPago, Ticket } from "../../lib/db/types";
 import { formatoMXN, generarCSV } from "../../lib/utils";
+import { useAvisos } from "@/lib/avisos/AvisosContext";
 
 interface Grupo {
   key: string;
@@ -30,6 +31,7 @@ export default function Credits() {
   const [enviarGrupo, setEnviarGrupo] = useState<Grupo | null>(null);
   const [saldando, setSaldando] = useState(false);
   const [errorSaldar, setErrorSaldar] = useState<string | null>(null);
+  const avisar = useAvisos();
 
   async function cargar() {
     if (!servicioActual) return;
@@ -68,6 +70,11 @@ export default function Credits() {
       // últimos dos no, sin que nada lo deshiciera.
       await db.registrarPagoLote(g.tickets.map((t) => t.id), formaPago);
       setGrupoAbierto(null);
+      avisar({
+        status: "success",
+        title: `Cuenta de ${g.nombre} saldada`,
+        description: `${g.tickets.length} folio${g.tickets.length === 1 ? "" : "s"} · ${formatoMXN(g.total)} · ${formaPago}`,
+      });
     } catch (err) {
       setErrorSaldar(err instanceof Error ? err.message : "No se pudo saldar la cuenta — vuelve a intentar.");
     } finally {
