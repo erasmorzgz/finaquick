@@ -29,9 +29,16 @@ export default function Register() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    // Confusión real: con dos campos seguidos que parecen pedir lo mismo,
+    // se escribió el correo también aquí — y el servidor solo podía
+    // contestar un rechazo genérico.
+    if (token.includes("@")) {
+      setError("En \"Código de invitación\" va el código que te dieron (letras y números, sin @), no tu correo.");
+      return;
+    }
     setLoading(true);
     try {
-      await register(nombre, correo, password, token, trampa);
+      await register(nombre, correo, password, token.trim(), trampa);
       navigate("/app/servicios");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo crear la cuenta.");
@@ -93,7 +100,7 @@ export default function Register() {
         <Field label="Código de invitación" id="reg-token" hint="Te lo da quien te invitó, aparte del correo.">
           <div className="relative">
             <KeyRound size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-            <Input id="reg-token" className="pl-10" required placeholder="El que te compartió tu administrador" value={token} onChange={(e) => setToken(e.target.value)} />
+            <Input id="reg-token" className="pl-10" required placeholder="El código que te dieron, no tu correo" value={token} onChange={(e) => setToken(e.target.value)} />
           </div>
         </Field>
 

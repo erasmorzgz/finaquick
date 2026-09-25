@@ -178,10 +178,17 @@ if %errorlevel% neq 0 (
         for /f "delims=" %%s in ('node "!GENJS!" 12') do set ADMIN_TOKEN=%%s
         del "!GENJS!" >nul 2>nul
 
-        echo insert into organizations ^(nombre, color_primario^) values ^(:'org_nombre', '#3a3a3a'^) returning id \gset> "%TEMP%\finaquick_bootstrap.sql"
-        echo insert into invitaciones ^(correo, org_id, rol, token^) values ^(:'admin_correo', :'id', 'admin', :'admin_token'^);>> "%TEMP%\finaquick_bootstrap.sql"
-        psql -d finaquick_local -v org_nombre="!ADMIN_ORG!" -v admin_correo="!ADMIN_CORREO!" -v admin_token="!ADMIN_TOKEN!" -f "%TEMP%\finaquick_bootstrap.sql" > "%TEMP%\finaquick_bootstrap.log" 2>&1
-        if !errorlevel! equ 0 (
+        rem -- Node arma el SQL (en UTF-8) en vez de pasarle el nombre a
+        rem -- psql con -v: segun la pagina de codigos de la consola, un
+        rem -- nombre con acento llegaba mal, las dos inserciones fallaban,
+        rem -- y sin ON_ERROR_STOP psql igual salia "bien" -- la
+        rem -- instalacion decia "Listo" sin haber creado la invitacion.
+        node servidor\api\scripts\sql-invitacion-inicial.js "!ADMIN_ORG!" "!ADMIN_CORREO!" "!ADMIN_TOKEN!" "%TEMP%\finaquick_bootstrap.sql"
+        set PGCLIENTENCODING=UTF8
+        psql -d finaquick_local -v ON_ERROR_STOP=1 -f "%TEMP%\finaquick_bootstrap.sql" > "%TEMP%\finaquick_bootstrap.log" 2>&1
+        set BOOTSTRAP_RESULTADO=!errorlevel!
+        set PGCLIENTENCODING=
+        if !BOOTSTRAP_RESULTADO! equ 0 (
             echo Listo - ya puedes registrarte en la app ^(boton Registrate^).
             echo Codigo de invitacion ^(pidelo tambien en el formulario de registro^): !ADMIN_TOKEN!
             echo.
@@ -189,7 +196,8 @@ if %errorlevel% neq 0 (
             echo revisarla, no para uso real^): registrate primero con lo de arriba, y
             echo despues corre "cd servidor\api" y luego "npm run demo" ^(ver LOCAL_SETUP.md, paso 5^).
         ) else (
-            echo No se pudo crear la invitacion automatica - revisa %TEMP%\finaquick_bootstrap.log, o hazlo a mano ^(ver LOCAL_SETUP.md, paso 4^).
+            echo No se pudo crear la invitacion del administrador - el detalle esta en %TEMP%\finaquick_bootstrap.log.
+            echo Para reintentar: borra el archivo servidor\api\.env y vuelve a abrir este archivo ^(o hazlo a mano, ver LOCAL_SETUP.md, paso 4^).
         )
         del "%TEMP%\finaquick_bootstrap.sql" >nul 2>nul
 

@@ -166,11 +166,11 @@ else
     # no hace falta relayarlo a nadie más: solo hay que copiarlo del
     # mensaje de abajo al formulario de registro.
     ADMIN_TOKEN=$(openssl rand -hex 12)
-    cat > /tmp/finaquick_bootstrap.sql <<'SQLEOF'
-insert into organizations (nombre, color_primario) values (:'org_nombre', '#3a3a3a') returning id \gset
-insert into invitaciones (correo, org_id, rol, token) values (:'admin_correo', :'id', 'admin', :'admin_token');
-SQLEOF
-    if psql -d finaquick_local -v org_nombre="$ADMIN_ORG" -v admin_correo="$ADMIN_CORREO" -v admin_token="$ADMIN_TOKEN" -f /tmp/finaquick_bootstrap.sql >/tmp/finaquick_bootstrap.log 2>&1; then
+    # Mismo SQL que arma el instalador de Windows (ver ahí por qué lo
+    # escribe Node y no psql -v), y ON_ERROR_STOP para que un fallo no
+    # termine en "Listo" sin invitación creada.
+    if node servidor/api/scripts/sql-invitacion-inicial.js "$ADMIN_ORG" "$ADMIN_CORREO" "$ADMIN_TOKEN" /tmp/finaquick_bootstrap.sql &&
+      PGCLIENTENCODING=UTF8 psql -d finaquick_local -v ON_ERROR_STOP=1 -f /tmp/finaquick_bootstrap.sql >/tmp/finaquick_bootstrap.log 2>&1; then
       echo "Listo — ya puedes registrarte en la app con ese correo (botón \"Regístrate\")."
       echo "Código de invitación (pídelo también en el formulario de registro): $ADMIN_TOKEN"
       echo ""
@@ -178,7 +178,8 @@ SQLEOF
       echo "revisarla, no para uso real): regístrate primero con lo de arriba, y"
       echo "después corre \"cd servidor/api && npm run demo\" (ver LOCAL_SETUP.md, paso 5)."
     else
-      echo "No se pudo crear la invitación automática — revisa /tmp/finaquick_bootstrap.log, o hazlo a mano (ver LOCAL_SETUP.md, paso 4)."
+      echo "No se pudo crear la invitación del administrador — el detalle está en /tmp/finaquick_bootstrap.log."
+      echo "Para reintentar: borra servidor/api/.env y vuelve a abrir este archivo (o hazlo a mano, ver LOCAL_SETUP.md, paso 4)."
     fi
     rm -f /tmp/finaquick_bootstrap.sql
 
