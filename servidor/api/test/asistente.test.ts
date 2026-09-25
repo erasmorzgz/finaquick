@@ -26,7 +26,7 @@ import {
   crearOrgConInvitacion,
   TOKEN_INVITACION_PRUEBA,
 } from "./helpers.js";
-import { validarDigesto } from "../src/asistente.js";
+import { validarDigesto, elegirModeloFlash } from "../src/asistente.js";
 
 let admin: ReturnType<typeof crearCliente>;
 
@@ -287,5 +287,41 @@ describe("validarDigesto — validación del resumen del chat libre (incluye fol
   test("rechaza el resumen completo si falta un campo requerido (esteAnio)", () => {
     const { esteAnio: _esteAnio, ...sinEsteAnio } = base;
     assert.equal(validarDigesto(sinEsteAnio), null);
+  });
+});
+
+describe("elegirModeloFlash — elección automática del modelo de Gemini", () => {
+  const modelo = (nombre: string, metodos = ["generateContent"]) => ({ name: `models/${nombre}`, supportedGenerationMethods: metodos });
+  const lista = [
+    modelo("gemini-2.5-flash"),
+    modelo("gemini-3.5-flash-lite"),
+    modelo("gemini-3.8-flash"),
+    modelo("gemini-3.10-flash"),
+    modelo("gemini-3-flash-preview"),
+    modelo("gemini-3.8-flash-tts"),
+    modelo("gemini-3.1-flash-image"),
+    modelo("text-embedding-004", ["embedContent"]),
+  ];
+
+  test("elige el Flash estable más reciente, comparando versiones como números (3.10 > 3.8)", () => {
+    assert.equal(elegirModeloFlash(lista), "gemini-3.10-flash");
+  });
+
+  test("se salta los modelos que ya respondieron 404 con esta clave", () => {
+    assert.equal(elegirModeloFlash(lista, new Set(["gemini-3.10-flash"])), "gemini-3.8-flash");
+  });
+
+  test("nunca elige preview, TTS, imagen ni modelos sin generateContent", () => {
+    const soloRaros = [modelo("gemini-3-flash-preview"), modelo("gemini-3.8-flash-tts"), modelo("gemini-3.1-flash-image"), modelo("gemini-3.8-flash", ["embedContent"])];
+    assert.equal(elegirModeloFlash(soloRaros), null);
+  });
+
+  test("prefiere Flash completo sobre Flash-Lite aunque el Lite sea más nuevo", () => {
+    assert.equal(elegirModeloFlash([modelo("gemini-3.9-flash-lite"), modelo("gemini-3.8-flash")]), "gemini-3.8-flash");
+  });
+
+  test("con una respuesta vacía o malformada regresa null (y quien llama usa el respaldo)", () => {
+    assert.equal(elegirModeloFlash(undefined), null);
+    assert.equal(elegirModeloFlash({ models: "no es arreglo" }), null);
   });
 });

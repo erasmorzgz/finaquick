@@ -337,10 +337,12 @@ GEMINI_API_KEY=la-clave-que-generaste
 GEMINI_MODELO=
 ```
 
-`GEMINI_MODELO` se puede dejar vacío — usa un modelo rápido y
-económico por default (`gemini-2.5-flash` al momento de escribir
-esto). Solo hace falta ponerlo si algún día Google retira ese modelo o
-se prefiere uno distinto.
+`GEMINI_MODELO` conviene dejarlo **vacío**: así el servidor le
+pregunta a Google qué modelos tiene disponibles tu clave y usa el
+Flash estable más reciente (rápido y económico). Si Google retira o
+restringe ese modelo, Quick elige otro solo, sin tocar nada. Solo
+ponlo si quieres forzar un modelo específico — y en ese caso, si
+Google lo retira, Quick lo avisará.
 
 3. Reinicia el servidor (el `.env` solo se lee al arrancar) y abre
    Quick: arriba debe decir **"IA conectada"**. Si dice "Modo básico",

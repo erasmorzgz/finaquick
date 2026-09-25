@@ -47,10 +47,14 @@ const SUGERENCIAS = [
 
 // Pista para quien administra, según el código con el que Gemini
 // rechazó la última llamada (ver estadoIA en servidor/api/src/asistente.ts).
-function pistaErrorIA(codigo: number): string {
+function pistaErrorIA(codigo: number, modelo: string, automatico: boolean): string {
   if (codigo === 0) return "El servidor no pudo conectarse a Google — revisa que tenga salida a internet.";
-  if (codigo === 400 || codigo === 401 || codigo === 403) return "La clave GEMINI_API_KEY no es válida o no tiene permiso — genera una nueva en Google AI Studio.";
-  if (codigo === 404) return "El modelo configurado en GEMINI_MODELO ya no existe — déjalo vacío para usar el de default.";
+  if (codigo === 400 || codigo === 401) return "Google rechazó la clave GEMINI_API_KEY — revisa que esté copiada completa, o genera una nueva en Google AI Studio.";
+  if (codigo === 403) return "La clave GEMINI_API_KEY no tiene permiso para usar Gemini — revisa en Google AI Studio que la API esté habilitada para ese proyecto.";
+  if (codigo === 404)
+    return automatico
+      ? `Google no tiene disponible el modelo "${modelo}" para esta clave — la siguiente pregunta probará con otro automáticamente.`
+      : `El modelo "${modelo}" de GEMINI_MODELO no está disponible para esta clave — déjalo vacío para que se elija uno automáticamente.`;
   if (codigo === 429) return "Se alcanzó el límite de uso gratuito de Google — espera un rato o revisa tu cuota en Google AI Studio.";
   return "Google respondió con un error temporal — vuelve a intentar en unos minutos.";
 }
@@ -941,7 +945,7 @@ function AvisoIA({ estado, esAdmin }: { estado: EstadoAsistente | null; esAdmin:
             : "Entiendo las preguntas más comunes, como las sugerencias de abajo, pero no preguntas libres."}
           {esAdmin &&
             (esError
-              ? ` ${pistaErrorIA(estado.codigo)} (código ${estado.codigo})`
+              ? ` ${pistaErrorIA(estado.codigo, estado.modelo, estado.automatico)} (código ${estado.codigo})`
               : " Para activarla, agrega GEMINI_API_KEY en servidor/api/.env y reinicia el servidor (ver LOCAL_SETUP.md).")}
         </p>
       </div>

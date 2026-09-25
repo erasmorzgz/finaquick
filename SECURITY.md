@@ -656,6 +656,11 @@ es la única forma de usar Quick, y su ausencia nunca rompe nada más.
   última falla (0 = sin conexión) — nunca la clave ni el contenido de
   ninguna respuesta. La pista de cómo arreglarlo solo se le muestra a
   quien administra.
+- **Elección automática del modelo**: sin `GEMINI_MODELO`, la primera
+  pregunta consulta la lista de modelos de Google (`ListModels`) con la
+  misma clave — esa consulta solo lleva la clave, ningún dato de la
+  institución — y se elige el Flash estable más reciente. Un modelo que
+  responde 404 se descarta y se elige otro en la misma pregunta.
 - **Cobertura de pruebas honesta**: la suite automatizada (ver
   `test/asistente.test.ts`) corre sin `GEMINI_API_KEY` — cubre la
   validación de entrada de las tres rutas, que exigen sesión iniciada,

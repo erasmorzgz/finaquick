@@ -267,5 +267,5 @@ export interface ArchivoEnviado {
 // con el que Gemini rechazó la última llamada (0 = sin conexión).
 export type EstadoAsistente =
   | { estado: "sin-configurar" }
-  | { estado: "lista"; modelo: string }
-  | { estado: "error"; modelo: string; codigo: number };
+  | { estado: "lista"; modelo: string; automatico: boolean }
+  | { estado: "error"; modelo: string; automatico: boolean; codigo: number };

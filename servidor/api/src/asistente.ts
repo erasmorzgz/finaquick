@@ -220,59 +220,145 @@ function extraerJson(texto: string): unknown {
 // como este (revisar condiciones vigentes en ai.google.dev). La clave
 // va en la URL (así lo pide Google, no por elección de este archivo),
 // nunca en un encabezado.
-const MODELO_GEMINI = GEMINI_MODELO || "gemini-2.5-flash";
+const API_GEMINI = "https://generativelanguage.googleapis.com/v1beta";
+
+// Sin GEMINI_MODELO, el modelo se elige solo: se le pregunta a Google
+// qué modelos tiene disponibles ESTA clave y se toma el Flash estable
+// más reciente. Fijar un nombre en el código ya falló dos veces —
+// Google retira o restringe familias enteras (2.0 apagada, 2.5 solo
+// para cuentas que ya la usaban), y una clave nueva recibía 404.
+const MODELO_RESPALDO = "gemini-flash-latest";
+let modeloDescubierto: string | null = null;
+// Modelos que ya respondieron 404 con esta clave — se saltan al volver
+// a elegir, para no insistir con el mismo pregunta tras pregunta.
+const modelosRechazados = new Set<string>();
+
+const PATRON_FLASH_ESTABLE = /^models\/gemini-(\d+)(?:\.(\d+))?-flash(-lite)?$/;
+
+/** El Flash estable más reciente de la lista que regresa Google
+ * (ListModels), sin preview, TTS, imagen ni los ya rechazados. Flash
+ * completo antes que Flash-Lite; dentro de cada uno, la versión más
+ * alta, comparando mayor y menor como números (3.10 arriba de 3.9).
+ * Exportada solo para probarla. */
+export function elegirModeloFlash(modelos: unknown, rechazados: ReadonlySet<string> = new Set()): string | null {
+  const candidatos = (Array.isArray(modelos) ? modelos : [])
+    .filter((m: any) => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent"))
+    .map((m: any) => ({ nombre: String(m.name).replace(/^models\//, ""), partes: PATRON_FLASH_ESTABLE.exec(String(m.name)) }))
+    .filter((c) => c.partes && !rechazados.has(c.nombre))
+    .sort(
+      (a, b) =>
+        Number(Boolean(a.partes![3])) - Number(Boolean(b.partes![3])) ||
+        Number(b.partes![1]) - Number(a.partes![1]) ||
+        Number(b.partes![2] ?? 0) - Number(a.partes![2] ?? 0)
+    );
+  return candidatos[0]?.nombre ?? null;
+}
+
+async function descubrirModelo(): Promise<string> {
+  try {
+    const res = await fetch(`${API_GEMINI}/models?pageSize=1000&key=${GEMINI_API_KEY}`);
+    if (!res.ok) return MODELO_RESPALDO;
+    const data = (await res.json()) as any;
+    return elegirModeloFlash(data?.models, modelosRechazados) ?? MODELO_RESPALDO;
+  } catch {
+    return MODELO_RESPALDO;
+  }
+}
+
+async function modeloActual(): Promise<string> {
+  if (GEMINI_MODELO) return GEMINI_MODELO;
+  modeloDescubierto ??= await descubrirModelo();
+  return modeloDescubierto;
+}
+
+/** Los modelos recientes "piensan" antes de contestar y ese
+ * razonamiento se descuenta de maxOutputTokens — con los límites cortos
+ * de este archivo se lo comía completo y la respuesta llegaba vacía. En
+ * 2.5 se apaga; en 3.x no se puede apagar, solo bajar a "low". */
+function configPensamiento(modelo: string): Record<string, unknown> | null {
+  if (/^gemini-2\.5-flash/.test(modelo)) return { thinkingBudget: 0 };
+  if (/^gemini-([3-9]|\d{2,})/.test(modelo)) return { thinkingLevel: "low" };
+  return null;
+}
 
 // Resultado de la llamada más reciente a Gemini, solo para el indicador
 // de estado de Quick (ver estadoIA). Sin esto, una clave inválida o un
 // modelo ya retirado por Google se veían exactamente igual que "sin IA":
 // todo caía a los patrones fijos sin que nadie supiera por qué.
-let ultimaLlamada: { ok: true } | { ok: false; codigo: number } | null = null;
+let ultimaLlamada: { ok: true } | { ok: false; codigo: number; modelo: string } | null = null;
+
+async function llamarGemini(
+  modelo: string,
+  instruccion: string,
+  texto: string,
+  opciones: { json: boolean; temperatura: number; maxTokens: number },
+  pensamiento: Record<string, unknown> | null
+): Promise<Response> {
+  return fetch(`${API_GEMINI}/models/${modelo}:generateContent?key=${GEMINI_API_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: instruccion }] },
+      contents: [{ parts: [{ text: texto }] }],
+      generationConfig: {
+        temperature: opciones.temperatura,
+        // Margen para el razonamiento cuando no se puede apagar; lo que
+        // de verdad acota la respuesta es la validación de longitud de
+        // cada función de abajo.
+        maxOutputTokens: pensamiento && "thinkingBudget" in pensamiento ? opciones.maxTokens : opciones.maxTokens + 1024,
+        ...(opciones.json ? { responseMimeType: "application/json" } : {}),
+        ...(pensamiento ? { thinkingConfig: pensamiento } : {}),
+      },
+    }),
+  });
+}
 
 async function preguntarGemini(
   instruccion: string,
   texto: string,
   opciones: { json: boolean; temperatura: number; maxTokens: number }
 ): Promise<string | null> {
-  let res: Response;
-  try {
-    res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODELO_GEMINI}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: instruccion }] },
-          contents: [{ parts: [{ text: texto }] }],
-          generationConfig: {
-            temperature: opciones.temperatura,
-            maxOutputTokens: opciones.maxTokens,
-            ...(opciones.json ? { responseMimeType: "application/json" } : {}),
-            // Los modelos 2.5 "piensan" antes de contestar por default, y
-            // ese razonamiento se descuenta de maxOutputTokens — con los
-            // límites cortos de aquí, se lo comía completo y la
-            // respuesta llegaba vacía.
-            ...(/gemini-2\.5-flash/.test(MODELO_GEMINI) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-          },
-        }),
+  // Hasta dos modelos por pregunta: si el elegido automáticamente ya no
+  // está disponible (404), se elige otro y se reintenta en la misma
+  // pregunta, sin que quien pregunta tenga que volver a escribirla.
+  for (let intento = 0; intento < 2; intento++) {
+    const modelo = await modeloActual();
+    let res: Response;
+    try {
+      const pensamiento = configPensamiento(modelo);
+      res = await llamarGemini(modelo, instruccion, texto, opciones, pensamiento);
+      // Si un modelo no acepta el ajuste de razonamiento, se reintenta
+      // una vez sin él en vez de dar la IA por caída.
+      if (res.status === 400 && pensamiento) res = await llamarGemini(modelo, instruccion, texto, opciones, null);
+    } catch {
+      ultimaLlamada = { ok: false, codigo: 0, modelo };
+      return null;
+    }
+    if (!res.ok) {
+      ultimaLlamada = { ok: false, codigo: res.status, modelo };
+      if (res.status === 404 && !GEMINI_MODELO && modelo !== MODELO_RESPALDO) {
+        modelosRechazados.add(modelo);
+        modeloDescubierto = null;
+        continue;
       }
-    );
-  } catch {
-    ultimaLlamada = { ok: false, codigo: 0 };
-    return null;
+      return null;
+    }
+    ultimaLlamada = { ok: true };
+    const data = (await res.json()) as any;
+    const partes: any[] = data?.candidates?.[0]?.content?.parts ?? [];
+    const textoRespuesta = partes
+      .filter((p) => typeof p?.text === "string" && !p.thought)
+      .map((p) => p.text)
+      .join("");
+    return textoRespuesta || null;
   }
-  if (!res.ok) {
-    ultimaLlamada = { ok: false, codigo: res.status };
-    return null;
-  }
-  ultimaLlamada = { ok: true };
-  const data = (await res.json()) as any;
-  return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
+  return null;
 }
 
 export type EstadoIA =
   | { estado: "sin-configurar" }
-  | { estado: "lista"; modelo: string }
-  | { estado: "error"; modelo: string; codigo: number };
+  | { estado: "lista"; modelo: string; automatico: boolean }
+  | { estado: "error"; modelo: string; automatico: boolean; codigo: number };
 
 /** Para el indicador de Quick. "lista" cubre tanto "ya contestó bien"
  * como "configurada pero aún sin usarse". `codigo` es el estado HTTP con
@@ -280,8 +366,10 @@ export type EstadoIA =
  * nunca incluye la clave ni el cuerpo de la respuesta. */
 export function estadoIA(): EstadoIA {
   if (!iaConfigurada) return { estado: "sin-configurar" };
-  if (ultimaLlamada && !ultimaLlamada.ok) return { estado: "error", modelo: MODELO_GEMINI, codigo: ultimaLlamada.codigo };
-  return { estado: "lista", modelo: MODELO_GEMINI };
+  const automatico = !GEMINI_MODELO;
+  const modelo = GEMINI_MODELO || modeloDescubierto || "automático";
+  if (ultimaLlamada && !ultimaLlamada.ok) return { estado: "error", modelo: ultimaLlamada.modelo, automatico, codigo: ultimaLlamada.codigo };
+  return { estado: "lista", modelo, automatico };
 }
 
 /** Punto de entrada — nunca lanza: cualquier problema (sin configurar,

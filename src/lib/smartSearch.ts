@@ -214,14 +214,20 @@ const SALUDOS = ["hola", "hey", "hi", "hello", "buenas", "buenos dias", "buenas 
  * como prefijo — "hola, cuánto cobré ayer" sigue su camino normal como
  * pregunta real, no se queda atorado en el saludo. */
 export function esSaludo(textoOriginal: string): boolean {
-  const texto = sinAcentos(textoOriginal.trim().toLowerCase()).replace(/[¡!¿?.,]/g, "");
-  return SALUDOS.includes(texto);
+  // "Hola Quick", "buenas tardes, Quick" — saludarlo por su nombre
+  // sigue siendo solo un saludo, no una búsqueda de "Quick".
+  const texto = sinAcentos(textoOriginal.trim().toLowerCase())
+    .replace(/[¡!¿?.,]/g, " ")
+    .replace(/\bquick\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return texto === "" || SALUDOS.includes(texto);
 }
 
 // Un saludo AL INICIO de una pregunta real ("hola, cuánto cobré ayer")
 // se descarta antes de interpretar — si no, "hola" terminaba como parte
 // del nombre a buscar.
-const SALUDO_INICIAL = /^[¡¿\s]*(hola|hey|buen[oa]s?\s+(d[ií]as|tardes|noches)|buenas|buen\s+d[ií]a|qu[eé]\s+tal|saludos)\b[\s,!.:;]*/i;
+const SALUDO_INICIAL = /^[¡¿\s]*((hola|hey|buen[oa]s?\s+(d[ií]as|tardes|noches)|buenas|buen\s+d[ií]a|qu[eé]\s+tal|saludos)\b[\s,!.:;¿]*)?(quick\b[\s,!.:;¿]*)?/i;
 
 export function interpretarConsulta(textoConSaludo: string, ahora: Date = new Date()): Consulta {
   const textoOriginal = textoConSaludo.trim().replace(SALUDO_INICIAL, "") || textoConSaludo.trim();
