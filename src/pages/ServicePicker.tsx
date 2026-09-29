@@ -100,7 +100,9 @@ export default function ServicePicker() {
         </p>
 
         {visibles.length > 0 ? (
-          <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          // Con 4 servicios (o 7, 10...), tres columnas dejaban uno solo
+          // en la última fila; dos columnas los acomodan parejos.
+          <div className={clsx("mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2", visibles.length % 3 !== 1 || visibles.length === 1 ? "lg:grid-cols-3" : "lg:grid-cols-2")}>
             {visibles.map((s, i) => (
               <button
                 key={s.id}

@@ -241,9 +241,57 @@
   /* Cualquier reporte imprimible (corte de caja, finanzas, los que
      sigan) se marca con [data-print-report] — esta regla ya no necesita
      enterarse de cada id nuevo. */
-  body * { visibility: hidden; }
-  [data-print-report], [data-print-report] * { visibility: visible; }
-  [data-print-report] { position: absolute; inset: 0; padding: 24px; }
+  /* Solo el reporte sale en papel. Todo lo que no es el reporte ni lo
+     contiene se saca del flujo con display:none — antes se ocultaba con
+     visibility:hidden y el reporte iba con position:absolute, que dejaba
+     espacio fantasma y en Firefox/Safari imprimía solo la primera página. */
+  body *:not([data-print-report]):not([data-print-report] *):not(:has([data-print-report])) {
+    display: none !important;
+  }
+  @page { size: letter; margin: 12mm 12mm 14mm; }
+  html, body { background: #fff !important; }
+  /* Siempre tinta sobre papel blanco, aunque la app esté en modo oscuro
+     (si no, el texto claro del modo oscuro salía invisible). */
+  body {
+    --color-page: #fff !important;
+    --color-surface: #fff !important;
+    --color-text-primary: #211d15 !important;
+    --color-text-secondary: #5c574a !important;
+    --color-text-muted: #6d6757 !important;
+    --color-border: rgb(33 29 21 / 0.14) !important;
+  }
+  .ambient-glow::before { display: none !important; }
+
+  /* Papel, no pantalla: sin vidrio, sombras ni fondos de color que se
+     pierden o gastan tinta; bordes finos en su lugar. */
+  [data-print-report] * {
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  [data-print-report] .glass,
+  [data-print-report] .elevate {
+    background: #fff !important;
+    border: 1px solid rgb(0 0 0 / 0.14) !important;
+  }
+  /* Una tarjeta que cruza de página repite su borde y sus esquinas en
+     cada pedazo, en vez de quedar abierta por abajo y por arriba. */
+  [data-print-report] .glass,
+  [data-print-report] .elevate {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+
+  /* Nunca partir una fila (nombre en una hoja, matrícula en la otra). */
+  [data-print-report] tr { break-inside: avoid; page-break-inside: avoid; }
+  [data-print-report] thead { display: table-header-group; }
+  /* El subtotal va una sola vez al final de su tabla — como pie de tabla
+     el navegador lo repetía al fondo de cada hoja, con la tabla a medias. */
+  [data-print-report] tfoot { display: table-row-group; }
+  [data-print-report] h2, [data-print-report] h3 { break-after: avoid; }
+  /* Filas más compactas en papel: el mismo reporte cabe en menos hojas
+     (el de Finanzas mandaba solo el total a una segunda). */
+  [data-print-report] td, [data-print-report] th { padding-top: 5px !important; padding-bottom: 5px !important; }
 }
 
 @layer utilities {

@@ -19,7 +19,7 @@ export function PrintReportHeader({
   meta?: { label: string; value: ReactNode }[];
 }) {
   return (
-    <div className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--color-border)] pb-4 print:border-black/15">
+    <div className="mb-5 flex break-inside-avoid flex-wrap items-start justify-between gap-4 border-b border-[var(--color-border)] pb-4 print:border-black/15">
       <div>
         <h2 className="text-xl font-extrabold text-[var(--color-text-primary)] print:text-black">{titulo}</h2>
         {contexto && <p className="mt-0.5 text-sm text-[var(--color-text-secondary)] print:text-black/70">{contexto}</p>}
@@ -42,7 +42,7 @@ export function PrintReportHeader({
  * fecha/hora de generación a la derecha. */
 export function PrintReportFooter({ orgNombre }: { orgNombre?: string }) {
   return (
-    <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)] print:border-black/15 print:text-black/50">
+    <div className="mt-6 flex break-inside-avoid flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)] print:border-black/15 print:text-black/50">
       <span>{orgNombre} — Finaquick</span>
       <span>Generado: {FORMATO_GENERADO.format(new Date())}</span>
     </div>
@@ -54,7 +54,7 @@ export function PrintReportFooter({ orgNombre }: { orgNombre?: string }) {
  * mismo sistema. */
 export function PrintReportTotalBar({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex items-center justify-between rounded-xl bg-[var(--color-brand-50)] px-4 py-3 dark:bg-brand-500/10 print:border print:border-black/15 print:bg-transparent">
+    <div className="flex break-inside-avoid items-center justify-between rounded-xl bg-[var(--color-brand-50)] px-4 py-3 dark:bg-brand-500/10 print:border print:border-black/15 print:bg-transparent">
       <span className="text-sm font-extrabold uppercase tracking-wide text-[var(--color-text-primary)] print:text-black">{label}</span>
       <span className="tabular text-lg font-extrabold text-brand-600 print:text-black">{value}</span>
     </div>

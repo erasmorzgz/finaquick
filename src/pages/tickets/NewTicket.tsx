@@ -348,30 +348,24 @@ export default function NewTicket() {
       <Card glass>
         <CardBody className="pt-5">
           <SectionLabel>Tipo de usuario</SectionLabel>
-          <div className="mb-5 flex flex-wrap gap-2">
+          <div role="group" aria-label="Tipo de usuario" className="mb-5 flex flex-wrap gap-2">
             {TIPOS.map((t) => {
               const activo = tipoUsuario === t.id;
               return (
                 <button
                   key={t.id}
+                  type="button"
+                  aria-pressed={activo}
                   onClick={() => setTipoUsuario(t.id)}
-                  title={t.id}
                   className={clsx(
-                    "inline-flex items-center gap-0 rounded-full border p-2 text-sm font-semibold transition-[background-color,border-color,color,padding-right] duration-150 ease-out-emil",
+                    "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-sm font-semibold transition-[background-color,border-color,color] duration-150 ease-out-emil",
                     activo
-                      ? "border-brand-600 bg-brand-600 pr-3.5 text-white"
-                      : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-brand-300"
+                      ? "border-brand-600 bg-brand-600 text-white"
+                      : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-brand-300 hover:text-[var(--color-text-primary)]"
                   )}
                 >
                   <t.icon size={15} className="flex-shrink-0" />
-                  <span
-                    className={clsx(
-                      "overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin-left] duration-[180ms] ease-out-emil",
-                      activo ? "ml-1.5 max-w-[180px] opacity-100" : "max-w-0 opacity-0"
-                    )}
-                  >
-                    {t.id}
-                  </span>
+                  {t.id}
                 </button>
               );
             })}

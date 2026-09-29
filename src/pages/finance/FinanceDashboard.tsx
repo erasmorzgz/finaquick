@@ -234,23 +234,23 @@ export default function FinanceDashboard() {
               <SectionLabel className="mb-1">Reporte mensual imprimible</SectionLabel>
               <p className="text-sm text-[var(--color-text-secondary)]">Desglose por servicio y por procedimiento de un mes específico, comparado contra el mes anterior — listo para imprimir o guardar como PDF.</p>
             </div>
-            <div className="flex flex-shrink-0 items-end gap-3">
-              <div className="w-44">
-                <Select value={mesReporte} onChange={(e) => setMesReporteElegido(e.target.value)}>
+            <div className="grid w-full grid-cols-2 items-end gap-3 sm:flex sm:w-auto sm:flex-shrink-0">
+              <div className="sm:w-44">
+                <Select aria-label="Mes del reporte" value={mesReporte} onChange={(e) => setMesReporteElegido(e.target.value)}>
                   {mensual.map((m) => (
                     <option key={m.mes} value={m.mes}>{m.label}</option>
                   ))}
                 </Select>
               </div>
-              <div className="w-48">
-                <Select value={filtroServicioReporte} onChange={(e) => setFiltroServicioReporte(e.target.value)}>
+              <div className="sm:w-48">
+                <Select aria-label="Servicio del reporte" value={filtroServicioReporte} onChange={(e) => setFiltroServicioReporte(e.target.value)}>
                   <option value="">Todos los servicios</option>
                   {servicios.map((s) => (
                     <option key={s.id} value={s.id}>{s.nombre}</option>
                   ))}
                 </Select>
               </div>
-              <Button icon={<Printer size={16} />} onClick={() => window.print()} disabled={porServicioReporte.length === 0}>
+              <Button className="col-span-2" icon={<Printer size={16} />} onClick={() => window.print()} disabled={porServicioReporte.length === 0}>
                 Imprimir
               </Button>
             </div>

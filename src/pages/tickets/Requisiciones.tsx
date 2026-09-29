@@ -36,11 +36,11 @@ export default function Requisiciones() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
-        <p className="text-sm text-[var(--color-text-secondary)]">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="max-w-prose text-sm text-[var(--color-text-secondary)]">
           Solicita material o compras para tu servicio — {esAdmin ? "tú apruebas o rechazas las tuyas y las del resto del equipo." : "un administrador la aprueba o la rechaza."}
         </p>
-        <Button icon={<Plus size={16} />} onClick={() => setNuevaAbierta(true)}>Nueva requisición</Button>
+        <Button className="w-full flex-shrink-0 sm:w-auto" icon={<Plus size={16} />} onClick={() => setNuevaAbierta(true)}>Nueva requisición</Button>
       </div>
 
       {requisiciones.length === 0 ? (

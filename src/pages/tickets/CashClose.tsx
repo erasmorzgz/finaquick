@@ -20,6 +20,14 @@ import { fechaLocal, fechaEfectiva, mesLocal } from "../../lib/fechaFolio";
 import { AnimatedNumber } from "@/components/motion/animated-number";
 
 const FORMATO_MES = new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric" });
+const FORMATO_DIA_CORTO = new Intl.DateTimeFormat("es-MX", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+const FORMATO_DIA_LARGO = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "long", year: "numeric" });
+function diaCorto(fecha: string) {
+  return FORMATO_DIA_CORTO.format(new Date(fecha + "T00:00:00"));
+}
+function diaLargo(fecha: string) {
+  return FORMATO_DIA_LARGO.format(new Date(fecha + "T00:00:00"));
+}
 function mesLabel(mes: string) {
   return FORMATO_MES.format(new Date(mes + "-02"));
 }
@@ -163,14 +171,18 @@ export default function CashClose() {
   return (
     <div>
       <div className="mb-5 flex flex-wrap items-end gap-3 print:hidden">
-        <div className="flex rounded-full bg-black/5 p-1 dark:bg-white/10">
+        <div role="group" aria-label="Vista del cierre" className="flex rounded-full bg-black/5 p-1 dark:bg-white/10">
           <button
+            type="button"
+            aria-pressed={vista === "dia"}
             onClick={() => setVista("dia")}
             className={`rounded-full px-3.5 py-1.5 text-sm font-bold transition-colors ${vista === "dia" ? "bg-[var(--color-surface)] text-[var(--color-text-primary)] shadow-sm" : "text-[var(--color-text-secondary)]"}`}
           >
             Por día
           </button>
           <button
+            type="button"
+            aria-pressed={vista === "mes"}
             onClick={() => setVista("mes")}
             className={`rounded-full px-3.5 py-1.5 text-sm font-bold transition-colors ${vista === "mes" ? "bg-[var(--color-surface)] text-[var(--color-text-primary)] shadow-sm" : "text-[var(--color-text-secondary)]"}`}
           >
@@ -180,36 +192,36 @@ export default function CashClose() {
 
         {vista === "dia" ? (
           <>
-            <div className="w-56">
-              <label className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">Fecha</label>
-              <Select value={fecha} onChange={(e) => setFecha(e.target.value)}>
-                {fechasDisponibles.length === 0 && <option value={fecha}>{fecha}</option>}
+            <div className="w-full sm:w-60">
+              <label htmlFor="cierre-fecha" className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">Fecha</label>
+              <Select id="cierre-fecha" value={fecha} onChange={(e) => setFecha(e.target.value)}>
+                {fechasDisponibles.length === 0 && <option value={fecha}>{diaCorto(fecha)}</option>}
                 {fechasDisponibles.map((f) => (
-                  <option key={f} value={f}>{f}</option>
+                  <option key={f} value={f}>{diaCorto(f)}</option>
                 ))}
               </Select>
             </div>
-            <Button variant="secondary" size="sm" onClick={() => setIncluidos(new Set(delDia.map((t) => t.id)))}>Todos</Button>
-            <Button variant="secondary" size="sm" onClick={() => setIncluidos(new Set())}>Ninguno</Button>
-            <Button variant="secondary" className="ml-auto" icon={<Send size={16} />} onClick={() => setEnviarAbierto(true)} disabled={seleccionados.length === 0}>
-              Enviar
-            </Button>
-            <Button icon={<Printer size={16} />} onClick={() => window.print()} disabled={seleccionados.length === 0}>
-              Imprimir {label.toLowerCase()}
-            </Button>
+            <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
+              <Button variant="secondary" className="flex-1 sm:flex-none" icon={<Send size={16} />} onClick={() => setEnviarAbierto(true)} disabled={seleccionados.length === 0}>
+                Enviar
+              </Button>
+              <Button className="flex-1 sm:flex-none" icon={<Printer size={16} />} onClick={() => window.print()} disabled={seleccionados.length === 0}>
+                Imprimir
+              </Button>
+            </div>
           </>
         ) : (
           <>
-            <div className="w-56">
-              <label className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">Mes</label>
-              <Select value={mesVista} onChange={(e) => setMesVistaElegido(e.target.value)}>
+            <div className="w-full sm:w-60">
+              <label htmlFor="cierre-mes" className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">Mes</label>
+              <Select id="cierre-mes" value={mesVista} onChange={(e) => setMesVistaElegido(e.target.value)}>
                 {mesesDisponibles.length === 0 && <option value="">Sin datos</option>}
                 {mesesDisponibles.map((m) => (
                   <option key={m} value={m}>{mesLabel(m)}</option>
                 ))}
               </Select>
             </div>
-            <Button className="ml-auto" icon={<Printer size={16} />} onClick={() => window.print()} disabled={delMes.length === 0}>
+            <Button className="w-full sm:ml-auto sm:w-auto" icon={<Printer size={16} />} onClick={() => window.print()} disabled={delMes.length === 0}>
               Imprimir resumen mensual
             </Button>
           </>
@@ -222,7 +234,7 @@ export default function CashClose() {
         ) : (
           <div id="cash-close-report" data-print-report>
             <PrintReportHeader
-              titulo={`${label} · ${fecha}`}
+              titulo={`${label} · ${diaLargo(fecha)}`}
               contexto={`${org?.nombre ?? ""}${servicioActual ? " · " + servicioActual.nombre : ""}`}
               meta={[{ label: "Transacciones", value: seleccionados.length }]}
             />
@@ -248,23 +260,52 @@ export default function CashClose() {
               />
             </div>
 
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm print:hidden">
+              <p className="text-[var(--color-text-secondary)]">
+                <span className="tabular font-bold text-[var(--color-text-primary)]">{seleccionados.length}</span> de {delDia.length} folios incluidos en el cierre
+              </p>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => setIncluidos(new Set(delDia.map((t) => t.id)))}
+                  disabled={seleccionados.length === delDia.length}
+                  className="rounded-full px-3 py-1 text-xs font-bold text-brand-700 transition-colors duration-150 ease-out-emil hover:bg-brand-50 disabled:text-[var(--color-text-muted)] disabled:hover:bg-transparent dark:text-brand-300 dark:hover:bg-brand-500/10"
+                >
+                  Incluir todos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIncluidos(new Set())}
+                  disabled={seleccionados.length === 0}
+                  className="rounded-full px-3 py-1 text-xs font-bold text-[var(--color-text-secondary)] transition-colors duration-150 ease-out-emil hover:bg-black/5 disabled:text-[var(--color-text-muted)] disabled:hover:bg-transparent dark:hover:bg-white/5"
+                >
+                  Quitar todos
+                </button>
+              </div>
+            </div>
+
             <div className="flex flex-col gap-5">
               {grupos.map((g) => {
                 const Icono = ICONO_FORMA[g.forma];
                 return (
                   <Card key={g.forma} className="overflow-hidden p-0">
-                    <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-black/[0.02] px-4 py-2.5 dark:bg-white/[0.03] print:bg-transparent">
-                      <Icono size={15} className="text-[var(--color-text-secondary)]" />
-                      <span className="text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
-                        {g.forma} ({g.tickets.length})
-                      </span>
-                    </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
+                          {/* El título del grupo va dentro del encabezado de la
+                              tabla: al imprimir, el navegador nunca lo deja solo
+                              al fondo de una hoja y lo repite en la siguiente. */}
+                          <tr>
+                            <th colSpan={6} className="border-b border-[var(--color-border)] bg-black/[0.02] px-4 py-2.5 text-left dark:bg-white/[0.03] print:bg-transparent">
+                              <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                                <Icono size={15} />
+                                {g.forma} ({g.tickets.length})
+                              </span>
+                            </th>
+                          </tr>
                           <tr className="text-left text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                            <th className="w-8 py-2 pl-4 print:hidden" />
-                            <th className="py-2 pr-3">Hora</th>
+                            <th className="w-11 py-2 pl-4 pr-3 print:w-0 print:p-0" />
+                            <th className="py-2 pr-3 print:pl-4">Hora</th>
                             <th className="py-2 pr-3">Folio</th>
                             <th className="py-2 pr-3">Nombre</th>
                             <th className="py-2 pr-3">Procedimientos</th>
@@ -274,15 +315,16 @@ export default function CashClose() {
                         <tbody>
                           {g.tickets.map((t) => (
                             <tr key={t.id} className={`border-t border-[var(--color-border)] ${incluidos.has(t.id) ? "" : "opacity-40 print:hidden"}`}>
-                              <td className="py-2 pl-4 print:hidden">
+                              <td className="py-2 pl-4 pr-3 print:p-0">
                                 <input
                                   type="checkbox"
-                                  className="h-4 w-4 accent-[var(--color-brand-500)]"
+                                  aria-label={`Incluir ${t.folio} en el cierre`}
+                                  className="h-4 w-4 align-middle accent-[var(--color-brand-500)] print:hidden"
                                   checked={incluidos.has(t.id)}
                                   onChange={() => toggle(t.id)}
                                 />
                               </td>
-                              <td className="tabular py-2 pr-3 text-[var(--color-text-secondary)]">{horaLocal(fechaEfectiva(t))}</td>
+                              <td className="tabular py-2 pr-3 text-[var(--color-text-secondary)] print:pl-4">{horaLocal(fechaEfectiva(t))}</td>
                               <td className="tabular py-2 pr-3 font-semibold text-[var(--color-text-primary)]">{t.folio}</td>
                               <td className="py-2 pr-3">
                                 <p className="font-semibold text-[var(--color-text-primary)]">{t.nombre}</p>
@@ -375,7 +417,7 @@ export default function CashClose() {
           open={enviarAbierto}
           onClose={() => setEnviarAbierto(false)}
           titulo={`Enviar ${label.toLowerCase()}`}
-          subtitulo={`${servicioActual.nombre} · ${fecha} · ${formatoMXN(total)}`}
+          subtitulo={`${servicioActual.nombre} · ${diaLargo(fecha)} · ${formatoMXN(total)}`}
           tipo={label}
           servicioId={servicioActual.id}
           servicioNombre={servicioActual.nombre}

@@ -9,6 +9,8 @@ import * as db from "../../lib/db";
 import type { Ticket } from "../../lib/db/types";
 import { formatoMXN } from "../../lib/utils";
 
+const MONEDA_SIN_CENTAVOS = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 });
+
 const DIAS = ["LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB", "DOM"];
 const MESES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -100,30 +102,36 @@ export default function Activity() {
           const delDia = porDia.get(k) ?? [];
           const hayPendiente = delDia.some((t) => t.estado === "credito");
           const esHoy = claveDia(hoy) === k;
+          const totalDia = delDia.reduce((suma, t) => suma + t.total, 0);
           return (
             <Card
               key={k}
               onClick={delDia.length > 0 ? () => { setDiaAbierto(k); setTicketAbierto(null); } : undefined}
+              aria-label={delDia.length > 0 ? `${fecha.getDate()}: ${delDia.length} folio${delDia.length === 1 ? "" : "s"}, ${formatoMXN(totalDia)}${hayPendiente ? ", con crédito pendiente" : ""}` : undefined}
               className={clsx(
-                "flex aspect-square flex-col items-center justify-center gap-1 p-1.5 transition-transform",
+                "flex aspect-square flex-col items-center justify-center gap-1 p-1.5 transition-[transform,border-color,box-shadow] duration-150 ease-out-emil sm:aspect-auto sm:h-24 sm:items-stretch sm:justify-between sm:p-2.5",
                 delDia.length > 0 && "cursor-pointer hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md",
                 esHoy && "ring-2 ring-brand-500"
               )}
             >
               {delDia.length > 0 ? (
                 <>
-                  <span
-                    className={clsx(
-                      "flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-extrabold text-white",
-                      hayPendiente ? "bg-[color:var(--color-warning)]" : "bg-[color:var(--color-good)]"
-                    )}
-                  >
-                    {delDia.length}
-                  </span>
-                  <span className="text-[10px] font-semibold text-[var(--color-text-muted)]">{fecha.getDate()}</span>
+                  <div className="flex items-center justify-center sm:justify-between">
+                    <span className="tabular hidden text-sm font-bold text-[var(--color-text-primary)] sm:block">{fecha.getDate()}</span>
+                    <span
+                      className={clsx(
+                        "flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-[11px] font-extrabold sm:h-6 sm:min-w-6",
+                        hayPendiente ? "bg-[color:var(--color-warning)] text-[#3b2800]" : "bg-[color:var(--color-good)] text-white"
+                      )}
+                    >
+                      {delDia.length}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-semibold text-[var(--color-text-muted)] sm:hidden">{fecha.getDate()}</span>
+                  <span className="tabular hidden truncate text-xs font-bold text-[var(--color-text-secondary)] sm:block">{MONEDA_SIN_CENTAVOS.format(totalDia)}</span>
                 </>
               ) : (
-                <span className="text-xs font-semibold text-[var(--color-text-muted)]">{fecha.getDate()}</span>
+                <span className="tabular text-xs font-semibold text-[var(--color-text-muted)] sm:self-start sm:text-sm">{fecha.getDate()}</span>
               )}
             </Card>
           );

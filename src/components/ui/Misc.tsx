@@ -96,7 +96,7 @@ export function StatCard({
   return (
     <div
       className={clsx(
-        "relative overflow-hidden rounded-[var(--radius-card)] p-5",
+        "relative overflow-hidden rounded-[var(--radius-card)] p-5 break-inside-avoid",
         hero ? "hero-gradient hero-dots" : "glass",
         className
       )}

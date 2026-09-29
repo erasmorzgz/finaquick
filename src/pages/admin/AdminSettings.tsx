@@ -39,19 +39,26 @@ export default function AdminSettings() {
 
   return (
     <div>
-      <div className="mb-6 inline-flex flex-wrap rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
+      {/* En celular las cinco pestañas no caben: se desliza de lado en vez
+          de mandar la última sola a una segunda línea. */}
+      <div className="-mx-5 mb-6 overflow-x-auto px-5 scrollbar-thin md:mx-0 md:px-0">
+        <div role="tablist" aria-label="Secciones de configuración" className="inline-flex rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
         {TABS.map((t) => (
           <button
             key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
             onClick={() => setTab(t.id)}
             className={clsx(
-              "rounded-full px-4 py-1.5 text-sm font-bold transition-colors",
+              "whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-bold transition-colors duration-150 ease-out-emil",
               tab === t.id ? "bg-brand-600 text-white" : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
             )}
           >
             {t.label}
           </button>
         ))}
+        </div>
       </div>
 
       {tab === "marca" && <MarcaTab />}
