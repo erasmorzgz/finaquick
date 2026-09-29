@@ -12,8 +12,6 @@ dist
 dist-ssr
 *.local
 
-# Configuración local de herramientas de desarrollo, no parte de la app.
-
 # Variables de entorno del frontend — no se suben nunca, para evitar
 # que alguien pegue por error una credencial real aquí algún día.
 .env
