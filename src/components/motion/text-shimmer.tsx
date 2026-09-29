@@ -1,4 +1,4 @@
-// beui.dev/components/motion/text-shimmer
+// Adaptado de beUI (beui.dev) — licencia MIT, ver LICENCIAS_DE_TERCEROS.md.
 // Adaptado: los @keyframes y la regla de movimiento reducido viven en
 // src/index.css en vez de inyectarse con una etiqueta <style> en línea.
 import { cn } from "@/lib/utils";

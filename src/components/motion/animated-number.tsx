@@ -1,5 +1,4 @@
-"use client";
-// beui.dev/components/motion/number
+// Adaptado de beUI (beui.dev) — licencia MIT, ver LICENCIAS_DE_TERCEROS.md.
 // Adaptado: `from` permite arrancar ya en el valor real (sin contar
 // desde 0) y animar solo los cambios posteriores.
 

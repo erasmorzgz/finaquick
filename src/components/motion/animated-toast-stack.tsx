@@ -1,6 +1,4 @@
-"use client";
-// beui.dev/components/motion/animated-toast-stack
-
+// Adaptado de beUI (beui.dev) — licencia MIT, ver LICENCIAS_DE_TERCEROS.md.
 import {
   AlertCircle,
   Bell,

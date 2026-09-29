@@ -2,7 +2,7 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
 // Combina clases de Tailwind resolviendo conflictos — la usan los
-// componentes de beUI (src/components/motion, src/components/agents).
+// componentes de beUI (src/components/motion, src/components/chat).
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }

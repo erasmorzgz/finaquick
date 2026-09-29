@@ -12,12 +12,7 @@ export default function Register() {
   const navigate = useNavigate();
   const [nombre, setNombre] = useState("");
   const [correo, setCorreo] = useState("");
-  // Prellenada para esta etapa de revisión con datos demo — quien
-  // registra la primera cuenta (el propio revisor) puede dejarla tal
-  // cual o cambiarla antes de enviar el formulario. No es un valor
-  // fijo del lado del servidor: sigue siendo un campo normal, editable,
-  // y la cuenta real queda con lo que se envíe en este formulario.
-  const [password, setPassword] = useState("Admin123");
+  const [password, setPassword] = useState("");
   // Lo da quien invita (Configuración → Usuarios), por el canal que
   // elija — sin esto, cualquiera que supiera o adivinara un correo con
   // invitación pendiente podía registrarlo primero.

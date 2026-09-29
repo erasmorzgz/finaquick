@@ -1,6 +1,6 @@
-// Shared motion tokens. Easing curves mirror the CSS custom properties in
-// globals.css; springs are the canonical physics used across components.
-// Strong custom variants — defaults like `ease-in`/`ease-out` feel weak.
+// Adaptado de beUI (beui.dev) — licencia MIT, ver LICENCIAS_DE_TERCEROS.md.
+// Curvas y resortes compartidos por los componentes animados (en CSS, la
+// curva de la app es --ease-out-emil, en src/index.css).
 
 export const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 export const EASE_IN_OUT = [0.77, 0, 0.175, 1] as const;

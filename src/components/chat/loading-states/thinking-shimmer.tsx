@@ -1,4 +1,4 @@
-// beui.dev/components/agents/loading-states
+// Adaptado de beUI (beui.dev) — licencia MIT, ver LICENCIAS_DE_TERCEROS.md.
 import type { ReactNode } from "react";
 import { TextShimmer } from "@/components/motion/text-shimmer";
 import { cn } from "@/lib/utils";

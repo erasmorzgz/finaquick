@@ -86,9 +86,12 @@ export default function CashClose() {
     db.listarTickets(servicioActual.id).then((list) => setTickets(list.filter((t) => t.estado === "pagado")));
   }, [servicioActual]);
 
+  // Los días con pagos, más el día que se está viendo aunque no tenga
+  // ninguno (por default, hoy): si no estuviera en la lista, el selector
+  // mostraba otra fecha distinta a la del reporte en pantalla.
   const fechasDisponibles = useMemo(
-    () => Array.from(new Set(tickets.map((t) => fechaLocal(fechaEfectiva(t))))).sort().reverse(),
-    [tickets]
+    () => Array.from(new Set([fecha, ...tickets.map((t) => fechaLocal(fechaEfectiva(t)))])).sort().reverse(),
+    [tickets, fecha]
   );
 
   const delDia = useMemo(
@@ -209,7 +212,6 @@ export default function CashClose() {
             <div className="w-full sm:w-60">
               <label htmlFor="cierre-fecha" className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">Fecha</label>
               <Select id="cierre-fecha" value={fecha} onChange={(e) => setFecha(e.target.value)}>
-                {fechasDisponibles.length === 0 && <option value={fecha}>{diaCorto(fecha)}</option>}
                 {fechasDisponibles.map((f) => (
                   <option key={f} value={f}>{diaCorto(f)}</option>
                 ))}

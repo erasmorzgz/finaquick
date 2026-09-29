@@ -1,8 +1,8 @@
 {
-  "name": "anahuac-servicios-profesionales",
+  "name": "finaquick",
   "private": true,
   "version": "1.0.0",
-  "description": "Finaquick — tickets, créditos, cortes de caja y desempeño financiero de múltiples servicios profesionales, en un solo lugar.",
+  "description": "Finaquick — folios, créditos, cortes de caja y desempeño financiero de múltiples servicios profesionales, en un solo lugar.",
   "type": "module",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

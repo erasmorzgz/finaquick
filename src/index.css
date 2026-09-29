@@ -111,7 +111,7 @@
 }
 
 /* Tokens estilo shadcn que usan los componentes de beUI
-   (src/components/motion, src/components/agents), traducidos al tema de
+   (src/components/motion, src/components/chat), traducidos al tema de
    Finaquick. `inline` hace que cada utilidad apunte directo a la
    variable de origen, así el modo oscuro (que redefine esas variables
    en `html.dark body`) y el color de marca configurable se respetan

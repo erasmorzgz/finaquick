@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Sparkles, Receipt, Banknote, CreditCard, ClipboardList, TrendingUp, ArrowRight, ArrowUpRight, ArrowDownRight, Minus, Wallet, UserRound, Download, SendHorizontal, TriangleAlert } from "lucide-react";
-import { MessageBubble, MessageBubbleContent } from "@/components/agents/message-bubble";
-import { ThinkingShimmer } from "@/components/agents/loading-states/thinking-shimmer";
+import { MessageBubble, MessageBubbleContent } from "@/components/chat/message-bubble";
+import { ThinkingShimmer } from "@/components/chat/loading-states/thinking-shimmer";
 import { Modal } from "../ui/Modal";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";

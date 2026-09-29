@@ -1,6 +1,4 @@
-"use client";
-// beui.dev/components/agents/message-bubble
-
+// Adaptado de beUI (beui.dev) — licencia MIT, ver LICENCIAS_DE_TERCEROS.md.
 import { ChevronDown } from "lucide-react";
 import {
   type HTMLMotionProps,
@@ -25,7 +23,7 @@ import {
   SPRING_SWAP,
 } from "@/lib/ease";
 import { cn } from "@/lib/utils";
-import { MessageSideContext } from "@/components/agents/message-context";
+import { MessageSideContext } from "@/components/chat/message-context";
 
 export type MessageBubbleVariant =
   | "solid"
