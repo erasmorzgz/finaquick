@@ -116,7 +116,7 @@ export default function Credits() {
               <Card
                 key={g.key}
                 onClick={() => setGrupoAbierto(g)}
-                className="flex cursor-pointer items-center gap-3.5 px-4 py-3 transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md"
+                className="flex cursor-pointer items-center gap-3.5 px-4 py-3 transition-[transform,border-color,box-shadow] duration-150 ease-out-emil hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md"
               >
                 <Avatar nombre={g.nombre} size={40} />
                 <div className="min-w-0 flex-1">

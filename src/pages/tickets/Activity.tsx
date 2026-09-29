@@ -156,6 +156,7 @@ export default function Activity() {
               <div key={t.id} className="rounded-xl border border-[var(--color-border)]">
                 <button
                   type="button"
+                  aria-expanded={abierto}
                   onClick={() => setTicketAbierto(abierto ? null : t.id)}
                   className="flex w-full items-center gap-3 px-3 py-2.5 text-left"
                 >
@@ -168,9 +169,20 @@ export default function Activity() {
                     <p className="truncate text-xs text-[var(--color-text-muted)]">{t.categoria} · {t.folio}</p>
                   </div>
                   <span className="tabular flex-shrink-0 font-bold text-[var(--color-text-primary)]">{formatoMXN(t.total)}</span>
-                  <ChevronDown size={16} className={clsx("flex-shrink-0 text-[var(--color-text-muted)] transition-transform", abierto && "rotate-180")} />
+                  <ChevronDown size={16} className={clsx("flex-shrink-0 text-[var(--color-text-muted)] transition-transform duration-200 ease-out-emil", abierto && "rotate-180")} />
                 </button>
-                {abierto && (
+                {/* Se despliega en vez de aparecer de golpe: la fila de la
+                    cuadrícula va de 0fr a 1fr (la única forma de animar a una
+                    altura "automática" sin medirla). Cerrado, el contenido
+                    queda inerte para el teclado y los lectores de pantalla. */}
+                <div
+                  inert={!abierto}
+                  className={clsx(
+                    "grid transition-[grid-template-rows] duration-200 ease-out-emil motion-reduce:transition-none",
+                    abierto ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                  )}
+                >
+                  <div className="min-h-0 overflow-hidden">
                   <div className="space-y-1.5 border-t border-[var(--color-border)] px-3 py-2.5">
                     {t.procedimientos.map((p, i) => (
                       <div key={i} className="flex items-center justify-between gap-3 text-sm">
@@ -185,7 +197,8 @@ export default function Activity() {
                       <p className="mt-1 border-t border-[var(--color-border)] pt-1.5 text-xs text-[var(--color-text-muted)]">ID: {t.identificador}</p>
                     )}
                   </div>
-                )}
+                  </div>
+                </div>
               </div>
             );
           })}

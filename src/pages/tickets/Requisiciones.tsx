@@ -88,7 +88,7 @@ export default function Requisiciones() {
 
 function TarjetaRequisicion({ r, onClick }: { r: Requisicion; onClick: () => void }) {
   return (
-    <Card onClick={onClick} className="flex cursor-pointer items-center gap-3.5 px-4 py-3 transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md">
+    <Card onClick={onClick} className="flex cursor-pointer items-center gap-3.5 px-4 py-3 transition-[transform,border-color,box-shadow] duration-150 ease-out-emil hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md">
       <Avatar nombre={r.solicitanteNombre ?? "?"} size={40} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">

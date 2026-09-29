@@ -85,7 +85,7 @@ export function Topbar({ title, subtitle }: { title: string; subtitle?: ReactNod
           </button>
 
           {open && (
-            <div className="glass animate-pop-in absolute right-0 top-[calc(100%+8px)] z-40 w-72 overflow-hidden rounded-2xl py-2">
+            <div className="glass animate-menu-in origin-top-right absolute right-0 top-[calc(100%+8px)] z-40 w-72 overflow-hidden rounded-2xl py-2">
               <div className="px-4 py-2">
                 <p className="truncate text-sm font-bold text-[var(--color-text-primary)]">{user.nombre}</p>
                 <p className="truncate text-xs text-[var(--color-text-muted)]">{user.correo}</p>

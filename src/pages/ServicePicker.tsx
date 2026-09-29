@@ -73,7 +73,7 @@ export default function ServicePicker() {
           </button>
 
           {openOrgs && puedeCambiarOrg && (
-            <div className="glass animate-pop-in absolute left-0 top-[calc(100%+8px)] z-40 w-72 overflow-hidden rounded-2xl py-2">
+            <div className="glass animate-menu-in origin-top-left absolute left-0 top-[calc(100%+8px)] z-40 w-72 overflow-hidden rounded-2xl py-2">
               <OrgSwitcherList onClose={() => setOpenOrgs(false)} />
             </div>
           )}
@@ -108,7 +108,7 @@ export default function ServicePicker() {
                 key={s.id}
                 onClick={() => elegirServicio(s.id)}
                 style={{ animationDelay: `${Math.min(i * 40, 320)}ms` }}
-                className="glass animate-pop-in group relative flex flex-col items-center gap-3 rounded-[var(--radius-card)] px-6 py-9 text-center transition-all duration-150 ease-out-emil [animation-fill-mode:backwards] hover:-translate-y-1"
+                className="glass animate-pop-in group relative flex flex-col items-center gap-3 rounded-[var(--radius-card)] px-6 py-9 text-center transition-[transform,border-color,box-shadow] duration-150 ease-out-emil [animation-fill-mode:backwards] hover:-translate-y-1"
               >
                 <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-black/[0.04] text-[var(--color-text-secondary)] transition-colors duration-150 ease-out-emil group-hover:bg-[var(--color-text-primary)] group-hover:text-[var(--color-page)] dark:bg-white/5">
                   <ServiceIcon name={s.icono} size={26} />

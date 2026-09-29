@@ -60,7 +60,7 @@ export function NotificationsBell() {
       </button>
 
       {open && (
-        <div className="glass animate-pop-in absolute right-0 top-[calc(100%+8px)] z-40 w-80 overflow-hidden rounded-2xl py-2">
+        <div className="glass animate-menu-in origin-top-right absolute right-0 top-[calc(100%+8px)] z-40 w-80 overflow-hidden rounded-2xl py-2">
           <p className="px-4 py-2 text-[10.5px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
             Archivos recibidos
           </p>

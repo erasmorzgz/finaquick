@@ -210,12 +210,25 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
 @keyframes pop-in {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
   to { opacity: 1; transform: none; }
 }
-@keyframes slide-in-right {
-  from { opacity: 0; transform: translateX(12px); }
+/* Salida de una ventana: más corta que la entrada y sin viaje — el
+   sistema respondiendo a "cerrar" no debe hacer esperar. */
+@keyframes pop-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: scale(0.98); }
+}
+/* Menús desplegables: crecen desde la esquina del botón que los abrió
+   (con origin-top-right / origin-top-left en el elemento), no suben
+   desde abajo como una ventana. */
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
   to { opacity: 1; transform: none; }
 }
 
@@ -228,12 +241,18 @@
   *, *::before, *::after {
     scroll-behavior: auto !important;
   }
-  .toggle-knob-motion,
-  .animate-pop-in,
-  .animate-slide-in-right {
-    animation: none !important;
+  .toggle-knob-motion {
     transition-property: opacity, background-color, color !important;
     transform: none !important;
+  }
+  /* Ventanas y menús: se quedan con el fundido (ayuda a ver qué apareció),
+     sin escala ni desplazamiento. */
+  .animate-pop-in,
+  .animate-menu-in {
+    animation: fade-in 0.15s ease !important;
+  }
+  .animate-pop-out {
+    animation: fade-out 0.15s ease !important;
   }
 }
 
@@ -470,8 +489,10 @@
   }
 
   .animate-fade-in { animation: fade-in 0.15s ease; }
-  .animate-pop-in { animation: pop-in 0.18s cubic-bezier(.2,.9,.3,1); }
-  .animate-slide-in-right { animation: slide-in-right 0.2s ease; }
+  .animate-fade-out { animation: fade-out 0.15s ease forwards; }
+  .animate-pop-in { animation: pop-in 0.18s var(--ease-out-emil); }
+  .animate-pop-out { animation: pop-out 0.14s var(--ease-out-emil) forwards; }
+  .animate-menu-in { animation: menu-in 0.15s var(--ease-out-emil); }
   .tabular {
     font-variant-numeric: tabular-nums;
   }

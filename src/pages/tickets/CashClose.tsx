@@ -18,6 +18,8 @@ import { formatoMXN, generarCSV } from "../../lib/utils";
 // — ver el comentario en fechaFolio.ts.
 import { fechaLocal, fechaEfectiva, mesLocal } from "../../lib/fechaFolio";
 import { AnimatedNumber } from "@/components/motion/animated-number";
+import { motion, useReducedMotion } from "motion/react";
+import { SPRING_LAYOUT } from "@/lib/ease";
 
 const FORMATO_MES = new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric" });
 const FORMATO_DIA_CORTO = new Intl.DateTimeFormat("es-MX", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
@@ -168,26 +170,38 @@ export default function CashClose() {
     return Array.from(acc.values()).sort((a, b) => b.total - a.total);
   }, [delMes]);
 
+  const reducirMovimiento = useReducedMotion();
+
   return (
     <div>
       <div className="mb-5 flex flex-wrap items-end gap-3 print:hidden">
         <div role="group" aria-label="Vista del cierre" className="flex rounded-full bg-black/5 p-1 dark:bg-white/10">
-          <button
-            type="button"
-            aria-pressed={vista === "dia"}
-            onClick={() => setVista("dia")}
-            className={`rounded-full px-3.5 py-1.5 text-sm font-bold transition-colors ${vista === "dia" ? "bg-[var(--color-surface)] text-[var(--color-text-primary)] shadow-sm" : "text-[var(--color-text-secondary)]"}`}
-          >
-            Por día
-          </button>
-          <button
-            type="button"
-            aria-pressed={vista === "mes"}
-            onClick={() => setVista("mes")}
-            className={`rounded-full px-3.5 py-1.5 text-sm font-bold transition-colors ${vista === "mes" ? "bg-[var(--color-surface)] text-[var(--color-text-primary)] shadow-sm" : "text-[var(--color-text-secondary)]"}`}
-          >
-            Por mes
-          </button>
+          {(
+            [
+              ["dia", "Por día"],
+              ["mes", "Por mes"],
+            ] as const
+          ).map(([id, etiqueta]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={vista === id}
+              onClick={() => setVista(id)}
+              className={`relative rounded-full px-3.5 py-1.5 text-sm font-bold transition-colors duration-150 ease-out-emil ${vista === id ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"}`}
+            >
+              {/* La pastilla se desliza a la opción elegida (mismo resorte
+                  que el resto de los indicadores de la app) en vez de
+                  brincar de un lado al otro. */}
+              {vista === id && (
+                <motion.span
+                  layoutId="cierre-vista-activa"
+                  transition={reducirMovimiento ? { duration: 0 } : SPRING_LAYOUT}
+                  className="absolute inset-0 rounded-full bg-[var(--color-surface)] shadow-sm"
+                />
+              )}
+              <span className="relative">{etiqueta}</span>
+            </button>
+          ))}
         </div>
 
         {vista === "dia" ? (

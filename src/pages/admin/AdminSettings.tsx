@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { clsx } from "clsx";
+import { motion, useReducedMotion } from "motion/react";
+import { SPRING_LAYOUT } from "@/lib/ease";
 import { Plus, Trash2, Pencil, Check, UserPlus, Mail, History as IconHistory, Eye, PenLine, TriangleAlert, KeyRound, Copy, X } from "lucide-react";
 import { Card, CardBody, SectionLabel } from "../../components/ui/Card";
 import { Field, Input } from "../../components/ui/Input";
@@ -36,6 +38,7 @@ const TABS = [
 
 export default function AdminSettings() {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("marca");
+  const reducirMovimiento = useReducedMotion();
 
   return (
     <div>
@@ -51,11 +54,18 @@ export default function AdminSettings() {
             aria-selected={tab === t.id}
             onClick={() => setTab(t.id)}
             className={clsx(
-              "whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-bold transition-colors duration-150 ease-out-emil",
-              tab === t.id ? "bg-brand-600 text-white" : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+              "relative whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-bold transition-colors duration-150 ease-out-emil",
+              tab === t.id ? "text-white" : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
             )}
           >
-            {t.label}
+            {tab === t.id && (
+              <motion.span
+                layoutId="config-pestana-activa"
+                transition={reducirMovimiento ? { duration: 0 } : SPRING_LAYOUT}
+                className="absolute inset-0 rounded-full bg-brand-600"
+              />
+            )}
+            <span className="relative">{t.label}</span>
           </button>
         ))}
         </div>
@@ -162,7 +172,7 @@ function MarcaTab() {
                 key={c.hex}
                 onClick={() => previsualizar(c.hex)}
                 title={c.nombre}
-                className="relative h-10 w-10 rounded-full ring-2 ring-offset-2 ring-offset-[var(--color-surface)] transition-transform hover:scale-110"
+                className="relative h-10 w-10 rounded-full ring-2 ring-offset-2 ring-offset-[var(--color-surface)] transition-[transform,box-shadow] duration-150 ease-out-emil hover:scale-110 active:scale-95"
                 style={{ background: c.hex, ["--tw-ring-color" as string]: color === c.hex ? c.hex : "transparent" }}
               >
                 {color === c.hex && <Check size={16} className="absolute inset-0 m-auto text-white" />}
