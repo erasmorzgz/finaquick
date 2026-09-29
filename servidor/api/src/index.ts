@@ -106,14 +106,28 @@ const limitadorLogin = rateLimit({
   legacyHeaders: false,
   message: { error: "Demasiados intentos — espera unos minutos y vuelve a intentar." },
 });
-app.use("/api/auth/login", limitadorLogin);
+// app.post (ruta exacta), no app.use: app.use también atrapaba
+// /api/auth/login/2fa, así que cada código de segundo factor gastaba el
+// cupo del login.
+app.post("/api/auth/login", limitadorLogin);
 // El código de 2FA es de 6 dígitos (un millón de combinaciones) — sin
 // límite de intentos aquí también, alguien con la contraseña correcta
 // pero sin el teléfono podría probarlas todas dentro de los 5 minutos
 // que dura el token de la primera mitad del login. Aparte del límite
 // de login: alguien ya pasó la contraseña para llegar aquí, así que
-// compartir presupuesto con /login no tendría sentido.
-app.use("/api/auth/login/2fa", limitadorLogin);
+// compartir presupuesto con /login no tendría sentido. La barrera
+// principal contra probar códigos es el bloqueo por cuenta (ver la ruta
+// en rutas.ts); este límite por IP es la segunda, y por la misma razón
+// del NAT del campus que el de login no puede ser bajo: muchas personas
+// con 2FA entrando al inicio del turno salen por la misma IP.
+const limitadorSegundoFactor = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados intentos — espera unos minutos y vuelve a intentar." },
+});
+app.post("/api/auth/login/2fa", limitadorSegundoFactor);
 // Aparte del de login: el registro es un evento raro (una vez por
 // persona, no todos los días), así que puede quedarse con un límite
 // bajo sin afectar el uso normal — y así una ola de altas de cuentas

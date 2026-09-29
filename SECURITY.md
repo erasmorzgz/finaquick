@@ -38,10 +38,11 @@ base de datos en ejecución, no únicamente mediante revisión de código.
   identidad de una forma más fuerte (ver "Inicio de sesión con
   Microsoft").
 - Límite de intentos por dirección IP: 300 cada 15 minutos en inicio
-  de sesión (y en el segundo paso de 2FA), 20 cada 15 minutos en
-  registro de cuentas nuevas — con presupuestos separados, para que
-  una tanda de altas de cuentas no le reste presupuesto de login a
-  todos los demás en la misma IP, ni viceversa. El número de login está
+  de sesión, 100 cada 15 minutos en el segundo paso de 2FA y 20 cada
+  15 minutos en registro de cuentas nuevas — con presupuestos
+  separados, para que ni una tanda de altas de cuentas ni los códigos
+  de 2FA le resten presupuesto de login a todos los demás en la misma
+  IP, ni viceversa. El número de login está
   dimensionado para una IP compartida por todo un campus (un mismo
   NAT/firewall institucional a la salida a internet, algo común): la
   barrera real contra fuerza bruta sobre UNA cuenta específica es el

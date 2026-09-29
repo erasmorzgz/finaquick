@@ -91,11 +91,21 @@ else
     DB_PASSWORD=$(node -e "console.log(require('crypto').randomBytes(24).toString('hex'))")
     DB_PASSWORD_RESPALDO=$(node -e "console.log(require('crypto').randomBytes(24).toString('hex'))")
 
+    # Si un paso de la base de datos falla, la instalación se detiene ahí
+    # con el motivo, en vez de seguir y terminar en "Listo" con una base
+    # a medias (psql, además, sin ON_ERROR_STOP sale "bien" aunque una
+    # instrucción del archivo haya fallado).
+    detener() {
+      echo ""
+      echo "$1"
+      read -n 1 -s -r -p "Presiona cualquier tecla para cerrar..."
+      exit 1
+    }
+
     if createdb finaquick_local 2>/dev/null; then
       echo "Base de datos 'finaquick_local' creada — aplicando esquema..."
-      psql -d finaquick_local -f servidor/esquema_local.sql >/tmp/finaquick_esquema.log 2>&1 || {
-        echo "Hubo un problema aplicando el esquema — revisa /tmp/finaquick_esquema.log"
-      }
+      psql -v ON_ERROR_STOP=1 -d finaquick_local -f servidor/esquema_local.sql >/tmp/finaquick_esquema.log 2>&1 ||
+        detener "No se pudo aplicar el esquema — el detalle está en /tmp/finaquick_esquema.log."
     else
       # Ya existía — pero de una versión ANTERIOR de Finaquick (de un
       # zip más viejo, probando esto antes) es indistinguible, desde
@@ -116,16 +126,17 @@ else
       echo "Si esta base SÍ tiene información real que quieres conservar, contesta que no."
       read -p "¿Borrar 'finaquick_local' y crearla de nuevo? (s/N): " RESPUESTA_RESET
       if [ "$RESPUESTA_RESET" = "s" ] || [ "$RESPUESTA_RESET" = "S" ]; then
-        dropdb finaquick_local
-        createdb finaquick_local
+        dropdb finaquick_local || detener "No se pudo borrar 'finaquick_local' (¿la está usando otro programa?)."
+        createdb finaquick_local || detener "No se pudo crear 'finaquick_local' — revisa que PostgreSQL esté corriendo."
         echo "Base de datos 'finaquick_local' recreada — aplicando esquema..."
-        psql -d finaquick_local -f servidor/esquema_local.sql >/tmp/finaquick_esquema.log 2>&1 || {
-          echo "Hubo un problema aplicando el esquema — revisa /tmp/finaquick_esquema.log"
-        }
+        psql -v ON_ERROR_STOP=1 -d finaquick_local -f servidor/esquema_local.sql >/tmp/finaquick_esquema.log 2>&1 ||
+          detener "No se pudo aplicar el esquema — el detalle está en /tmp/finaquick_esquema.log."
       else
         echo "Se deja tal cual — no se toca su contenido."
       fi
     fi
+    psql -d finaquick_local -c "select 1" -w >/dev/null 2>&1 ||
+      detener "No se pudo abrir 'finaquick_local' — revisa que PostgreSQL esté corriendo y vuelve a intentar."
 
     # Como el registro es solo por invitación, hace falta crear la
     # primera cuenta — se pregunta aquí en vez de dejar algo de prueba
@@ -169,8 +180,9 @@ else
     # Mismo SQL que arma el instalador de Windows (ver ahí por qué lo
     # escribe Node y no psql -v), y ON_ERROR_STOP para que un fallo no
     # termine en "Listo" sin invitación creada.
-    if node servidor/api/scripts/sql-invitacion-inicial.js "$ADMIN_ORG" "$ADMIN_CORREO" "$ADMIN_TOKEN" /tmp/finaquick_bootstrap.sql &&
-      PGCLIENTENCODING=UTF8 psql -d finaquick_local -v ON_ERROR_STOP=1 -f /tmp/finaquick_bootstrap.sql >/tmp/finaquick_bootstrap.log 2>&1; then
+    BOOTSTRAP_SQL=$(mktemp /tmp/finaquick_bootstrap.XXXXXX) || detener "No se pudo crear un archivo temporal."
+    if node servidor/api/scripts/sql-invitacion-inicial.js "$ADMIN_ORG" "$ADMIN_CORREO" "$ADMIN_TOKEN" "$BOOTSTRAP_SQL" &&
+      PGCLIENTENCODING=UTF8 psql -d finaquick_local -v ON_ERROR_STOP=1 -f "$BOOTSTRAP_SQL" >/tmp/finaquick_bootstrap.log 2>&1; then
       echo "Listo — ya puedes registrarte en la app con ese correo (botón \"Regístrate\")."
       echo "Código de invitación (pídelo también en el formulario de registro): $ADMIN_TOKEN"
       echo ""
@@ -178,13 +190,15 @@ else
       echo "revisarla, no para uso real): regístrate primero con lo de arriba, y"
       echo "después corre \"cd servidor/api && npm run demo\" (ver LOCAL_SETUP.md, paso 5)."
     else
-      echo "No se pudo crear la invitación del administrador — el detalle está en /tmp/finaquick_bootstrap.log."
-      echo "Para reintentar: borra servidor/api/.env y vuelve a abrir este archivo (o hazlo a mano, ver LOCAL_SETUP.md, paso 4)."
+      rm -f "$BOOTSTRAP_SQL"
+      detener "No se pudo crear la invitación del administrador — el detalle está en /tmp/finaquick_bootstrap.log. Vuelve a abrir este archivo para reintentar."
     fi
-    rm -f /tmp/finaquick_bootstrap.sql
+    rm -f "$BOOTSTRAP_SQL"
 
-    psql -d finaquick_local -c "alter role finaquick_app password '$DB_PASSWORD';" >/dev/null 2>&1 || true
-    psql -d finaquick_local -c "alter role finaquick_respaldo password '$DB_PASSWORD_RESPALDO';" >/dev/null 2>&1 || true
+    psql -v ON_ERROR_STOP=1 -d finaquick_local -c "alter role finaquick_app password '$DB_PASSWORD';" >/dev/null ||
+      detener "No se pudo configurar el acceso de la app a la base de datos."
+    psql -v ON_ERROR_STOP=1 -d finaquick_local -c "alter role finaquick_respaldo password '$DB_PASSWORD_RESPALDO';" >/dev/null ||
+      detener "No se pudo configurar el acceso de respaldos a la base de datos."
 
     mkdir -p servidor/api
     cat > servidor/api/.env <<EOF
@@ -204,7 +218,7 @@ fi
 
 if [ ! -d node_modules ]; then
   echo "Preparando el frontend (solo la primera vez, tarda unos minutos)..."
-  npm install --silent
+  npm ci --silent || { echo "No se pudieron instalar las dependencias del frontend (¿hay internet?)."; exit 1; }
 fi
 
 if [ ! -f .env.local ] && [ -f demo.env ]; then
@@ -214,7 +228,7 @@ fi
 if [ "$DB_LISTA" = true ]; then
   if [ ! -d servidor/api/node_modules ]; then
     echo "Preparando el servidor (solo la primera vez)..."
-    (cd servidor/api && npm install --silent)
+    (cd servidor/api && npm ci --silent) || { echo "No se pudieron instalar las dependencias del servidor (¿hay internet?)."; exit 1; }
   fi
   echo "Iniciando el servidor..."
   (cd servidor/api && npm run dev > /tmp/finaquick_servidor.log 2>&1 &)
@@ -226,8 +240,8 @@ echo "Abriendo Finaquick en tu navegador..."
 echo "(Para cerrarlo, vuelve a esta ventana y presiona Ctrl+C)"
 echo ""
 
-# Espera a que Vite imprima la URL real (el puerto puede variar) y
-# abre el navegador justo ahí, en vez de adivinar el puerto.
+# Espera a que Vite imprima su URL (siempre localhost:5173, ver
+# vite.config.ts) y abre el navegador justo cuando ya está lista.
 npm run dev 2>&1 | tee /tmp/finaquick-dev.log &
 DEV_PID=$!
 

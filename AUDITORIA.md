@@ -6,6 +6,44 @@ instituciones multi-organización. Este documento resume el alcance,
 la metodología y los resultados de la revisión; el detalle técnico
 completo de cada control está en [`SECURITY.md`](SECURITY.md).
 
+## Verificación de esta entrega (29 de septiembre de 2026)
+
+**Cómo se verificó.** El paquete se instaló desde cero con su propio
+instalador de macOS, sin intervención manual, usando un nombre de
+institución con acentos. Después se registró la cuenta de administrador
+con el código de invitación que imprimió el instalador, se cargaron los
+datos de ejemplo y se recorrieron las pantallas principales en un
+navegador: se creó un folio desde el formulario, se consultó a Quick y
+se imprimieron el cierre de caja y el reporte financiero. La suite de
+pruebas del servidor (134 pruebas, contra PostgreSQL real) pasó
+completa, y `npm audit --omit=dev` reportó cero alertas en el cliente y
+en el servidor.
+
+**Cambios de esta entrega:**
+
+- Inicio de sesión: el límite de intentos por IP del segundo factor
+  ahora es independiente del de la contraseña; antes, cada código de
+  segundo factor consumía también el cupo del inicio de sesión. Cubierto
+  por una prueba automática.
+- Instaladores: se detienen con un mensaje claro si falla cualquier paso
+  de la base de datos (crearla, aplicar el esquema, crear la invitación
+  inicial o configurar los accesos), en lugar de continuar con una
+  instalación incompleta. Los nombres con acentos se guardan
+  correctamente, y las dependencias se instalan exactamente con las
+  versiones de los archivos de bloqueo (`npm ci`).
+- El cliente de desarrollo queda fijo en `localhost:5173`, el mismo
+  origen que acepta el servidor.
+- Reportes impresos sin cortes entre hojas, mejoras de uso en varias
+  pantallas y animaciones más consistentes.
+
+**Límites de esta verificación:** el instalador de Windows se revisó
+línea por línea pero no se ejecutó en Windows; la función opcional de
+Quick con Gemini no se probó con una clave real. Antes de manejar datos
+reales, conviene repetir la instalación y `npm test` en el equipo de
+destino, junto con un respaldo y su restauración. Este resultado no
+constituye una garantía de ausencia total de errores o
+vulnerabilidades.
+
 ## Alcance de la revisión
 
 La revisión cubrió el servidor propio de la aplicación

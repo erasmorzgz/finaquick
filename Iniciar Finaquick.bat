@@ -108,7 +108,8 @@ if %errorlevel% neq 0 (
         rem -- usa "!errorlevel!" en casos parecidos.
         if !errorlevel! equ 0 (
             echo Base de datos 'finaquick_local' creada - aplicando esquema...
-            psql -d finaquick_local -f servidor\esquema_local.sql > "%TEMP%\finaquick_esquema.log" 2>&1
+            psql -v ON_ERROR_STOP=1 -d finaquick_local -f servidor\esquema_local.sql > "%TEMP%\finaquick_esquema.log" 2>&1
+            if !errorlevel! neq 0 goto :detener_esquema
         ) else (
             rem -- Ya existia -- pero de una version ANTERIOR de Finaquick,
             rem -- de un zip mas viejo probando esto antes, es
@@ -136,13 +137,18 @@ if %errorlevel% neq 0 (
             set /p RESPUESTA_RESET="Borrar 'finaquick_local' y crearla de nuevo? (s/N): "
             if /i "!RESPUESTA_RESET!"=="s" (
                 dropdb finaquick_local
+                if !errorlevel! neq 0 goto :detener_bd
                 createdb finaquick_local
+                if !errorlevel! neq 0 goto :detener_bd
                 echo Base de datos 'finaquick_local' recreada - aplicando esquema...
-                psql -d finaquick_local -f servidor\esquema_local.sql > "%TEMP%\finaquick_esquema.log" 2>&1
+                psql -v ON_ERROR_STOP=1 -d finaquick_local -f servidor\esquema_local.sql > "%TEMP%\finaquick_esquema.log" 2>&1
+                if !errorlevel! neq 0 goto :detener_esquema
             ) else (
                 echo Se deja tal cual - no se toca su contenido.
             )
         )
+        psql -d finaquick_local -c "select 1" -w >nul 2>nul
+        if !errorlevel! neq 0 goto :detener_bd
 
         rem -- Como el registro es solo por invitacion, hace falta crear
         rem -- la primera cuenta -- se pregunta aqui en vez de dejar algo
@@ -196,13 +202,15 @@ if %errorlevel% neq 0 (
             echo revisarla, no para uso real^): registrate primero con lo de arriba, y
             echo despues corre "cd servidor\api" y luego "npm run demo" ^(ver LOCAL_SETUP.md, paso 5^).
         ) else (
-            echo No se pudo crear la invitacion del administrador - el detalle esta en %TEMP%\finaquick_bootstrap.log.
-            echo Para reintentar: borra el archivo servidor\api\.env y vuelve a abrir este archivo ^(o hazlo a mano, ver LOCAL_SETUP.md, paso 4^).
+            del "%TEMP%\finaquick_bootstrap.sql" >nul 2>nul
+            goto :detener_invitacion
         )
         del "%TEMP%\finaquick_bootstrap.sql" >nul 2>nul
 
-        psql -d finaquick_local -c "alter role finaquick_app password '!DB_PASSWORD!';" >nul 2>nul
-        psql -d finaquick_local -c "alter role finaquick_respaldo password '!DB_PASSWORD_RESPALDO!';" >nul 2>nul
+        psql -v ON_ERROR_STOP=1 -d finaquick_local -c "alter role finaquick_app password '!DB_PASSWORD!';" >nul 2>nul
+        if !errorlevel! neq 0 goto :detener_bd
+        psql -v ON_ERROR_STOP=1 -d finaquick_local -c "alter role finaquick_respaldo password '!DB_PASSWORD_RESPALDO!';" >nul 2>nul
+        if !errorlevel! neq 0 goto :detener_bd
 
         (
             echo DATABASE_URL=postgresql://finaquick_app:!DB_PASSWORD!@localhost:5432/finaquick_local
@@ -221,7 +229,8 @@ if %errorlevel% neq 0 (
 
 if not exist node_modules (
     echo Preparando el frontend ^(solo la primera vez, tarda unos minutos^)...
-    call npm install
+    call npm ci
+    if !errorlevel! neq 0 goto :detener_dependencias
 )
 
 if not exist .env.local (
@@ -232,8 +241,10 @@ if "!DB_LISTA!"=="1" (
     if not exist "servidor\api\node_modules" (
         echo Preparando el servidor ^(solo la primera vez^)...
         pushd servidor\api
-        call npm install
+        call npm ci
+        set NPM_RESULTADO=!errorlevel!
         popd
+        if !NPM_RESULTADO! neq 0 goto :detener_dependencias
     )
     echo Iniciando el servidor...
     start "Finaquick - servidor" /min /D "%~dp0servidor\api" cmd /c "npm run dev"
@@ -290,3 +301,35 @@ if "!ADMIN_CORREO!"=="" (
     goto preguntar_admin_correo
 )
 goto :eof
+
+rem ================================================================
+rem Paradas por error -- si un paso falla, la instalacion se detiene
+rem aqui con el motivo en vez de seguir y terminar en "Listo" con una
+rem base a medias. El pause deja leer el mensaje antes de que se
+rem cierre la ventana.
+rem ================================================================
+
+:detener_esquema
+echo.
+echo No se pudo aplicar el esquema de la base de datos - el detalle esta en %TEMP%\finaquick_esquema.log.
+pause
+exit /b 1
+
+:detener_bd
+echo.
+echo No se pudo preparar la base de datos 'finaquick_local'. Revisa que PostgreSQL este corriendo y vuelve a intentar.
+pause
+exit /b 1
+
+:detener_invitacion
+echo.
+echo No se pudo crear la invitacion del administrador - el detalle esta en %TEMP%\finaquick_bootstrap.log.
+echo Vuelve a abrir este archivo para reintentar.
+pause
+exit /b 1
+
+:detener_dependencias
+echo.
+echo No se pudieron instalar las dependencias. Revisa tu conexion a internet y vuelve a intentar.
+pause
+exit /b 1

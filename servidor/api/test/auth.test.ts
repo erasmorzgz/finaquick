@@ -309,3 +309,27 @@ describe("Cambiar la contraseña invalida cualquier sesión anterior", () => {
     assert.equal(yaLibre.status, 200);
   });
 });
+
+describe("Límites de intentos de login y segundo factor", () => {
+  test("agotar el límite del segundo factor no bloquea el inicio de sesión normal", async () => {
+    // Antes, el límite de /auth/login también atrapaba /auth/login/2fa
+    // (app.use hace coincidir el prefijo): cada código de 2FA gastaba el
+    // cupo del login. Ahora son dos límites separados.
+    const cliente = crearCliente();
+    let ultimo = 0;
+    for (let i = 0; i < 101; i++) {
+      const { status } = await cliente.pedirJson("/auth/login/2fa", {
+        method: "POST",
+        body: JSON.stringify({ tokenPre: "no-es-un-token", codigo: "000000" }),
+      });
+      ultimo = status;
+    }
+    assert.equal(ultimo, 429, "la petición 101 al segundo factor debe cortarse");
+
+    const login = await cliente.pedirJson("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ correo: "nadie@lxl.test", password: "ClaveIncorrecta123!" }),
+    });
+    assert.notEqual(login.status, 429, "el login no debe quedar bloqueado por los intentos de 2FA");
+  });
+});

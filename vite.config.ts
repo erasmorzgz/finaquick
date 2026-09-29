@@ -10,7 +10,13 @@ export default defineConfig({
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
+  // Solo en esta computadora y siempre en el mismo puerto: el servidor
+  // solo acepta peticiones de http://localhost:5173 (ORIGEN_PERMITIDO),
+  // así que si Vite se cambiara solo a otro puerto el inicio de sesión
+  // dejaría de funcionar sin explicación.
   server: {
-    host: true,
+    host: 'localhost',
+    port: 5173,
+    strictPort: true,
   },
 })
