@@ -24,7 +24,7 @@ import type { RequestConUsuario } from "./auth.js";
 import { mandarCorreo, correoConfigurado, escaparHtml } from "./correo.js";
 import { interpretarConIA, narrarResultado, responderChatLibre, estadoIA } from "./asistente.js";
 import * as registro from "./registro.js";
-import { conciliar, type MovimientoGetnet, type MovimientoSistema } from "./conciliacion.js";
+import { conciliar, huellaDeCobros, type CobroParaHuella, type MovimientoGetnet, type MovimientoSistema } from "./conciliacion.js";
 
 export const rutas = Router();
 
@@ -1935,10 +1935,17 @@ rutas.post("/archivos", limitadorArchivos, requerirSesion, async (req: RequestCo
       let servicioNombre: string | undefined;
       if (a.servicioId !== undefined) {
         const { rows: servicioRows } = await c.query(
-          "select nombre from services where id = $1 and org_id = $2",
+          "select nombre, cierre_caja_label, referencia_getnet from services where id = $1 and org_id = $2",
           [a.servicioId, a.orgId]
         );
         if (servicioRows.length === 0) throw new Error("SERVICIO_INVALIDO");
+        // Un servicio con referencia de Getnet envía su corte de caja por
+        // POST /cierres-caja/enviar, que exige la comparación aprobada. Aquí
+        // no se acepta el archivo con el nombre del corte (el tipo es solo
+        // una etiqueta: esto cierra el camino directo, no es un control por sí solo).
+        if (servicioRows[0].referencia_getnet && sinAcentos(a.tipo) === sinAcentos(servicioRows[0].cierre_caja_label)) {
+          throw new Error("CORTE_POR_SU_RUTA");
+        }
         servicioNombre = servicioRows[0].nombre;
       }
       const { rows } = await c.query(
@@ -1964,6 +1971,7 @@ rutas.post("/archivos", limitadorArchivos, requerirSesion, async (req: RequestCo
     }
   } catch (error: any) {
     if (error?.message === "SERVICIO_INVALIDO") return falla(res, 400, "Ese servicio no existe.");
+    if (error?.message === "CORTE_POR_SU_RUTA") return falla(res, 409, "El corte de caja de este servicio se envía desde su pantalla, una vez comparado con Getnet.");
     // Mismo caso que en /categorias: la política de seguridad a nivel
     // de fila exige que el destinatario pertenezca de verdad a la
     // organización indicada — si no, esto es un 42501 de PostgreSQL, no
@@ -2447,7 +2455,10 @@ rutas.patch("/requisiciones/:id/enviar", requerirSesion, async (req: RequestConU
       if (!valido[0]?.ok) throw new Error("DESTINATARIO_INVALIDO");
       const { rows } = await c.query(
         `update requisiciones set destinatario_id = $1, enviada_en = now()
-         where id = $2 and estado = 'pendiente' and (solicitado_por = usuario_actual() or es_admin())
+         where id = $2 and estado = 'pendiente'
+           and (es_admin() or (solicitado_por = usuario_actual() and exists (
+             select 1 from service_access sa where sa.service_id = requisiciones.service_id and sa.user_id = usuario_actual() and sa.solo_consulta = false
+           )))
          returning *`,
         [req.body.destinatarioId, req.params.id]
       );
@@ -2504,13 +2515,17 @@ rutas.patch("/requisiciones/:id", requerirSesion, async (req: RequestConUsuario,
       // Solo se puede resolver una requisición que sigue "pendiente" —
       // mismo candado de un solo sentido que ya usa el pago de un
       // folio en crédito (ver POST /tickets/:id/pago) — y solo quien es
-      // administrador o la persona a quien se le envió.
+      // administrador o la persona a quien se le envió SIEMPRE QUE siga
+      // pudiendo recibirla (rol y acceso completo vigentes): si a esa
+      // persona se le redujo el acceso a solo consulta después del envío,
+      // ya no puede resolverla.
       const { rows } = await c.query(
         `update requisiciones
          set estado = $1, aprobado_por = usuario_actual(),
              firma_resolucion = coalesce($2, firma_resolucion), sello_resolucion = coalesce($3, sello_resolucion),
              motivo_rechazo = $4, resuelto_en = now()
-         where id = $5 and estado = 'pendiente' and (es_admin() or destinatario_id = usuario_actual())
+         where id = $5 and estado = 'pendiente'
+           and (es_admin() or (destinatario_id = usuario_actual() and es_destinatario_valido(usuario_actual(), service_id)))
          returning *`,
         [estado, firmaResolucion, selloResolucion, estado === "rechazada" ? motivoRechazo ?? null : null, req.params.id]
       );
@@ -2583,21 +2598,32 @@ function zonaHorariaDelServidor() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
-// Cobros con tarjeta del día, con el mismo criterio de "día" que el
-// corte de caja: el de la fecha de pago (o de creación, si nunca fue
-// crédito), en la zona horaria del servidor (ver ZONA_HORARIA).
-async function cobrosConTarjetaDelDia(c: any, servicioId: string, fecha: string): Promise<MovimientoSistema[]> {
+interface CobroDelDia extends MovimientoSistema, CobroParaHuella {}
+
+// Cobros pagados del día, con el mismo criterio de "día" que el corte
+// de caja: el de la fecha de pago (o de creación, si nunca fue crédito),
+// en la zona horaria del servidor (ver ZONA_HORARIA).
+async function cobrosPagadosDelDia(c: any, servicioId: string, fecha: string): Promise<CobroDelDia[]> {
   const zona = zonaHorariaDelServidor();
   const { rows } = await c.query(
-    `select id, folio, nombre, total,
-            to_char(coalesce(fecha_pago, fecha) at time zone $2, 'HH24:MI') as hora
+    `select id, folio, nombre, total, forma_pago,
+            to_char(coalesce(fecha_pago, fecha) at time zone $2, 'HH24:MI') as hora,
+            to_char(coalesce(fecha_pago, fecha) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') as fecha_efectiva
      from tickets
-     where service_id = $1 and estado = 'pagado' and forma_pago = any($4)
+     where service_id = $1 and estado = 'pagado'
        and (coalesce(fecha_pago, fecha) at time zone $2)::date = $3::date
      order by coalesce(fecha_pago, fecha), folio`,
-    [servicioId, zona, fecha, FORMAS_PAGO_TARJETA]
+    [servicioId, zona, fecha]
   );
-  return rows.map((r: any) => ({ id: r.id, folio: r.folio, nombre: r.nombre, total: Number(r.total), hora: r.hora }));
+  return rows.map((r: any) => ({
+    id: r.id, folio: r.folio, nombre: r.nombre, total: Number(r.total), hora: r.hora,
+    fechaEfectiva: r.fecha_efectiva, formaPago: r.forma_pago ?? "Efectivo",
+  }));
+}
+
+// Los cobros con tarjeta (débito y crédito), que es lo que Getnet reporta.
+async function cobrosConTarjetaDelDia(c: any, servicioId: string, fecha: string): Promise<CobroDelDia[]> {
+  return (await cobrosPagadosDelDia(c, servicioId, fecha)).filter((m) => FORMAS_PAGO_TARJETA.includes(m.formaPago));
 }
 
 function aCierre(r: any) {
@@ -2626,9 +2652,13 @@ const SELECT_CIERRE = `select cc.*, to_char(cc.fecha, 'YYYY-MM-DD') as fecha_tex
   from cierres_caja cc left join profiles ap on ap.id = cc.aprobado_por`;
 
 // ¿Los cobros con tarjeta del sistema siguen siendo los mismos que
-// cuando se hizo la comparación? Si se registró o corrigió un cobro
-// después, la comparación ya no vale y hay que repetirla.
-function sigueVigente(cierre: any, actual: MovimientoSistema[]) {
+// cuando se hizo la comparación? Se compara la huella de cada cobro
+// (identificador, importe, fecha y forma de pago), no solo la suma y la
+// cantidad: corregir un importe de 100+200 a 150+150 deja la suma igual.
+// Un cierre hecho antes de que existiera la huella se compara por suma y
+// cantidad, que es lo único que guardó.
+function sigueVigente(cierre: any, actual: CobroDelDia[]) {
+  if (cierre.huella_sistema) return cierre.huella_sistema === huellaDeCobros(actual);
   const total = Math.round(actual.reduce((s, m) => s + m.total * 100, 0));
   return Math.round(Number(cierre.total_sistema) * 100) === total && cierre.movimientos_sistema === actual.length;
 }
@@ -2656,20 +2686,20 @@ rutas.post("/cierres-caja/conciliar", requerirSesion, async (req: RequestConUsua
       const { rows } = await c.query(
         `insert into cierres_caja
            (service_id, fecha, referencia, archivo_nombre, archivo_hash, total_sistema, total_getnet, diferencia,
-            movimientos_sistema, movimientos_getnet, detalle, estado, creado_por)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,usuario_actual())
+            movimientos_sistema, movimientos_getnet, detalle, estado, huella_sistema, creado_por)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,usuario_actual())
          on conflict (service_id, fecha) do update set
            referencia = excluded.referencia, archivo_nombre = excluded.archivo_nombre, archivo_hash = excluded.archivo_hash,
            total_sistema = excluded.total_sistema, total_getnet = excluded.total_getnet, diferencia = excluded.diferencia,
            movimientos_sistema = excluded.movimientos_sistema, movimientos_getnet = excluded.movimientos_getnet,
-           detalle = excluded.detalle, estado = excluded.estado, observacion = null, aprobado_por = null,
+           detalle = excluded.detalle, estado = excluded.estado, huella_sistema = excluded.huella_sistema, observacion = null, aprobado_por = null,
            enviado_en = null, actualizado_en = now()
          returning id`,
         [
           b.servicioId, b.fecha, b.referencia?.trim() || null, b.archivoNombre ?? null, b.archivoHash ?? null,
           r.totalSistema, r.totalGetnet, r.diferencia, r.movimientosSistema, r.movimientosGetnet,
           JSON.stringify({ coinciden: r.coinciden, soloSistema: r.soloSistema, soloGetnet: r.soloGetnet, cancelaciones: r.cancelaciones }),
-          estado,
+          estado, huellaDeCobros(sistema),
         ]
       );
       await registrarEventoAtomico(
@@ -2735,28 +2765,110 @@ rutas.post("/cierres-caja/:id/aprobar", requerirSesion, async (req: RequestConUs
   }
 });
 
-// Marca el corte como enviado, solo si está aprobado y la comparación
-// sigue vigente.
-rutas.post("/cierres-caja/:id/enviado", requerirSesion, async (req: RequestConUsuario, res) => {
+// ---------- Envío del corte de caja ----------
+//
+// El corte se envía por ESTA ruta, no por POST /archivos: aquí, en una
+// sola transacción, se comprueba el permiso, que el corte esté aprobado y
+// su comparación siga vigente, se arma el documento con los datos del
+// servidor (no con lo que mande el cliente), se guarda el archivo para
+// quien lo recibe y se deja constancia del envío. Un servicio con
+// referencia de Getnet no puede enviar su corte por POST /archivos (ver
+// ahí).
+
+const ORDEN_FORMAS_CORTE = ["Efectivo", "Tarjeta de débito", "Tarjeta de crédito"];
+const INICIO_PELIGROSO_CSV = /^[=+\-@\t\r]/;
+function celdaCsv(valor: string | number): string {
+  let t = String(valor);
+  // Un valor que empiece con = + - @ se abriría como fórmula en Excel.
+  if (INICIO_PELIGROSO_CSV.test(t)) t = `'${t}`;
+  return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+}
+const filaCsv = (fila: (string | number)[]) => fila.map(celdaCsv).join(",");
+const sinAcentos = (t: string) => t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+
+rutas.post("/cierres-caja/enviar", requerirSesion, async (req: RequestConUsuario, res) => {
+  const b = req.body ?? {};
+  const errorServicio = validarUuid(b.servicioId, true);
+  if (errorServicio !== true) return falla(res, 400, errorServicio);
+  const errorPara = validarUuid(b.paraId, true);
+  if (errorPara !== true) return falla(res, 400, errorPara);
+  if (!fechaDiaValida(b.fecha)) return falla(res, 400, "Esa fecha no es válida.");
+  if (b.mensaje !== undefined && (typeof b.mensaje !== "string" || b.mensaje.length > LARGO_MAX_BIO)) return falla(res, 400, "El mensaje es demasiado largo.");
+
   try {
-    const cierre = await conSesionDe(req.usuarioId!, async (c) => {
-      const { rows: previo } = await c.query("select *, to_char(fecha, 'YYYY-MM-DD') as fecha_texto from cierres_caja where id = $1", [req.params.id]);
-      if (previo.length === 0) throw new Error("NO_ENCONTRADO");
-      if (previo[0].estado === "no_aprobado") throw new Error("NO_APROBADO");
-      const actual = await cobrosConTarjetaDelDia(c, previo[0].service_id, previo[0].fecha_texto);
-      if (!sigueVigente(previo[0], actual)) throw new Error("DESACTUALIZADO");
-      // La política de seguridad filtra el UPDATE a 0 filas (sin error)
-      // para una cuenta de solo consulta.
-      const { rowCount } = await c.query("update cierres_caja set enviado_en = now() where id = $1", [req.params.id]);
-      if (rowCount === 0) throw new Error("SIN_PERMISO");
-      return (await c.query(`${SELECT_CIERRE} where cc.id = $1`, [req.params.id])).rows[0];
+    const { archivo, destinatario, servicio } = await conSesionDe(req.usuarioId!, async (c) => {
+      const { rows: servicioRows } = await c.query("select org_id, nombre, cierre_caja_label, referencia_getnet from services where id = $1", [b.servicioId]);
+      if (servicioRows.length === 0) throw new Error("SERVICIO_INVALIDO");
+      const serv = servicioRows[0];
+      // Enviar el corte exige acceso completo al servicio (no solo consulta).
+      const { rows: permiso } = await c.query(
+        "select (es_admin() or exists (select 1 from service_access where service_id = $1 and user_id = usuario_actual() and solo_consulta = false)) as ok",
+        [b.servicioId]
+      );
+      if (!permiso[0]?.ok) throw new Error("SIN_PERMISO");
+
+      const cobros = await cobrosPagadosDelDia(c, b.servicioId, b.fecha);
+      if (cobros.length === 0) throw new Error("SIN_COBROS");
+      const tarjeta = cobros.filter((m) => FORMAS_PAGO_TARJETA.includes(m.formaPago));
+
+      // El cierre se bloquea mientras se envía, para que dos envíos o un
+      // envío y una aprobación no se pisen.
+      const { rows: cierres } = await c.query(`select *, to_char(fecha, 'YYYY-MM-DD') as fecha_texto from cierres_caja where service_id = $1 and fecha = $2::date for update`, [b.servicioId, b.fecha]);
+      const cierre = cierres[0];
+      if (serv.referencia_getnet && tarjeta.length > 0) {
+        if (!cierre) throw new Error("SIN_COMPARAR");
+        if (cierre.estado === "no_aprobado") throw new Error("NO_APROBADO");
+        if (!sigueVigente(cierre, tarjeta)) throw new Error("DESACTUALIZADO");
+      }
+
+      // El documento sale de los datos del servidor.
+      const filas: (string | number)[][] = cobros.map((t) => [t.folio, t.nombre, t.formaPago, t.total]);
+      filas.push([]);
+      const grupos = [...ORDEN_FORMAS_CORTE, ...new Set(cobros.map((t) => t.formaPago).filter((f) => !ORDEN_FORMAS_CORTE.includes(f)))];
+      for (const forma of grupos) {
+        const delGrupo = cobros.filter((t) => t.formaPago === forma);
+        if (delGrupo.length > 0) filas.push(["", "", `Subtotal ${forma}`, delGrupo.reduce((x, t) => x + Math.round(t.total * 100), 0) / 100]);
+      }
+      filas.push(["", "", "Total del día", cobros.reduce((x, t) => x + Math.round(t.total * 100), 0) / 100]);
+      if (cierre) {
+        const etiqueta = { aprobado: "Cuadra con Getnet", no_aprobado: "No cuadra con Getnet", aprobado_con_diferencia: "Aprobado con diferencia" }[cierre.estado as string];
+        filas.push(["", "", "Conciliación con Getnet", `${etiqueta} (diferencia ${Number(cierre.diferencia).toFixed(2)})`]);
+      }
+      const contenido = [filaCsv(["Folio", "Nombre", "Forma de pago", "Total"]), ...filas.map(filaCsv)].join("\n");
+
+      const { rows } = await c.query(
+        `insert into archivos_enviados (org_id, de_id, para_id, service_id, servicio_nombre, tipo, nombre_archivo, contenido, mensaje)
+         values ($1, usuario_actual(), $2, $3, $4, $5, $6, $7, $8) returning *`,
+        [serv.org_id, b.paraId, b.servicioId, serv.nombre, serv.cierre_caja_label, `${sinAcentos(serv.cierre_caja_label)}-${sinAcentos(serv.nombre)}-${b.fecha}.csv`, contenido, b.mensaje?.trim() || null]
+      );
+      if (cierre) {
+        const { rowCount } = await c.query("update cierres_caja set enviado_en = now() where id = $1", [cierre.id]);
+        if (rowCount === 0) throw new Error("SIN_PERMISO");
+      }
+      await registrarEventoAtomico(c, serv.org_id, "Envió un corte de caja", `${serv.nombre} · ${b.fecha}`);
+      const destRows = (await c.query("select correo, nombre from profiles where id = $1", [b.paraId])).rows;
+      return { archivo: rows[0], destinatario: destRows[0] as { correo: string; nombre: string } | undefined, servicio: serv };
     });
-    res.json({ cierre: aCierre(cierre), vigente: true });
+    res.json(aArchivo(archivo));
+    if (correoConfigurado && destinatario?.correo) {
+      mandarCorreo(
+        destinatario.correo,
+        "Te enviaron un archivo en Finaquick",
+        `<p>Hola ${escaparHtml(destinatario.nombre ?? "")},</p><p>Te llegó un corte de caja nuevo en Finaquick (${escaparHtml(String(servicio.nombre))}).</p><p>Entra a la app para verlo.</p>`
+      ).catch(() => {});
+    }
   } catch (error: any) {
-    if (error?.message === "NO_ENCONTRADO") return falla(res, 404, "Ese cierre no existe, o no tienes acceso a él.");
-    if (error?.message === "NO_APROBADO") return falla(res, 409, "Este corte no está aprobado: no se puede enviar.");
-    if (error?.message === "DESACTUALIZADO") return falla(res, 409, "Los cobros con tarjeta cambiaron después de la comparación — súbela de nuevo.");
-    if (error?.message === "SIN_PERMISO" || error?.code === "42501") return falla(res, 403, "Tu acceso a este servicio es de solo consulta.");
-    falla(res, 500, "No se pudo registrar el envío.", error);
+    const mensajes: Record<string, [number, string]> = {
+      SERVICIO_INVALIDO: [404, "Ese servicio no existe, o no tienes acceso a él."],
+      SIN_PERMISO: [403, "Tu acceso a este servicio es de solo consulta: no puedes enviar el corte."],
+      SIN_COBROS: [400, "No hay pagos ese día: no hay nada que enviar."],
+      SIN_COMPARAR: [409, "Este corte todavía no se compara con el reporte de Getnet."],
+      NO_APROBADO: [409, "Este corte no está aprobado: no se puede enviar."],
+      DESACTUALIZADO: [409, "Los cobros con tarjeta cambiaron después de la comparación — súbela de nuevo."],
+    };
+    const conocido = mensajes[error?.message];
+    if (conocido) return falla(res, conocido[0], conocido[1]);
+    if (error?.code === "42501") return falla(res, 403, "No puedes enviarle un archivo a esa persona — no pertenece a la organización indicada.");
+    falla(res, 500, "No se pudo enviar el corte.", error);
   }
 });

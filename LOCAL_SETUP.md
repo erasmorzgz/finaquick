@@ -42,9 +42,12 @@ versión anterior) y al abrir el instalador contestas que **no** quieres
 borrarla, el instalador le aplica solo la actualización de estructura
 (`servidor/actualizar_esquema_20260930.sql`): agrega las columnas y
 tablas de las requisiciones con formato y de la conciliación con Getnet,
-no borra ni cambia tus datos, y se puede repetir. Con una instalación
-manual, corre esa actualización a mano, con el mismo usuario que aplicó
-el esquema:
+no borra ni cambia tus datos, y se puede repetir. También se aplica
+cada vez que se abre el instalador sobre una instalación que ya tiene su
+`servidor/api/.env`. Si el servidor arranca con una base sin actualizar,
+lo dice en su registro y `GET /api/salud` responde 503 con el aviso. Con
+una instalación manual, corre esa actualización a mano, con el mismo
+usuario que aplicó el esquema:
 
 ```bash
 psql -v ON_ERROR_STOP=1 -d finaquick_local -f servidor/actualizar_esquema_20260930.sql
@@ -713,9 +716,13 @@ terceros para funcionar.
    del otro.
 5. **Enviar**: con la referencia configurada y cobros con tarjeta ese
    día, el corte solo se envía si cuadra, o si un administrador lo
-   aprueba «con diferencia» dejando el motivo. Si después cambian los
-   cobros con tarjeta de ese día, la comparación deja de valer y hay que
-   repetirla. Un día sin cobros con tarjeta se envía como siempre.
+   aprueba «con diferencia» dejando el motivo. Lo que se envía es el
+   corte completo del día, armado por el servidor (no la selección de
+   folios de la pantalla). Si después cambia cualquier cobro con tarjeta
+   de ese día, la comparación deja de valer y hay que repetirla. Un día
+   sin cobros con tarjeta se envía sin comparar. Las filas del reporte
+   con fecha ilegible se omiten y hay que reconocerlo antes de comparar;
+   la coincidencia con Getnet es por monto, no por persona.
 
 Se guardan el nombre del archivo, su huella (SHA-256) y los montos y
 autorizaciones comparados; **no** el archivo ni números de tarjeta. El

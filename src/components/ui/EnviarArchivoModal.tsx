@@ -25,6 +25,7 @@ export function EnviarArchivoModal({
   nombreArchivo,
   contenido,
   onEnviado,
+  enviar,
 }: {
   open: boolean;
   onClose: () => void;
@@ -37,6 +38,9 @@ export function EnviarArchivoModal({
   contenido: string;
   /** Se llama una vez que el archivo ya se envió. */
   onEnviado?: () => void;
+  /** Otra forma de enviar (por ejemplo, el corte de caja, que el servidor
+   * arma y valida por su cuenta). Sin esto se envía `contenido` como archivo. */
+  enviar?: (datos: { paraId: string; mensaje?: string }) => Promise<void>;
 }) {
   const { user } = useAuth();
   const { org } = useOrg();
@@ -65,7 +69,9 @@ export function EnviarArchivoModal({
     setError(null);
     setEnviando(true);
     try {
-      await db.enviarArchivo({
+      if (enviar) {
+        await enviar({ paraId: destinatario.id, mensaje: mensaje.trim() || undefined });
+      } else await db.enviarArchivo({
         orgId: org.id,
         deId: user.id,
         paraId: destinatario.id,

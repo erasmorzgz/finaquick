@@ -363,8 +363,13 @@ function DetalleRequisicionModal({
 
   const destinatarios = useMemo(() => destinatariosPosibles(usuarios, user?.id, servicioId), [usuarios, user?.id, servicioId]);
   const pendiente = resumen.estado === "pendiente";
-  const puedeResolver = pendiente && (esAdmin || resumen.destinatarioId === user?.id);
-  const puedeEnviar = pendiente && (esAdmin || resumen.solicitadoPor === user?.id);
+  // Mismo criterio que el servidor: quien la recibe solo puede resolverla
+  // mientras siga siendo de finanzas con acceso completo a este servicio
+  // (reducirle el acceso a solo consulta se lo quita), y quien la pidió
+  // solo reenviarla con acceso completo.
+  const soloConsulta = !!user?.serviciosSoloConsulta?.includes(servicioId);
+  const puedeResolver = pendiente && (esAdmin || (resumen.destinatarioId === user?.id && user?.rol === "finanzas" && !soloConsulta));
+  const puedeEnviar = pendiente && (esAdmin || (resumen.solicitadoPor === user?.id && !soloConsulta));
 
   async function correr(accion: () => Promise<unknown>, exito: { title: string; description?: string; status?: "success" | "neutral" }) {
     setProcesando(true);

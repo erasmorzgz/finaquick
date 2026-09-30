@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { deflateRawSync } from "node:zlib";
 import {
   parsearCSV, parsearMonto, parsearFechaHora, detectarColumnas, interpretarReporte,
-  leerArchivoTabla, leerXlsx, decodificarTexto, huellaArchivo,
+  leerArchivoTabla, leerXlsx, decodificarTexto, huellaArchivo, leerTablaMarcada,
 } from "./getnet.ts";
 
 const CSV_GETNET = [
@@ -271,5 +271,57 @@ describe("Excel (.xlsx)", () => {
   test("la huella del archivo es un SHA-256 estable", async () => {
     const h = await huellaArchivo(new TextEncoder().encode("abc"));
     assert.equal(h, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  });
+});
+
+describe("Referencia exacta y fechas ilegibles", () => {
+  const conReferencias = (celdas: string[]) =>
+    parsearCSV(["Afiliación,Fecha,Monto", ...celdas.map((c, i) => `${c},30/09/2026,${10 + i}`)].join("\n"));
+
+  test("la referencia solo coincide si es igual a la celda o a una de sus palabras (nunca por estar contenida)", () => {
+    const buenas = ["566029", "00566029", "0566029", "566-029", "Afiliación 566029", "566029 - Odontología"];
+    const malas = ["15660299", "5660297", "ABC566029XYZ", "5660290", "56602900"];
+    const r = interpretarReporte(conReferencias([...buenas, ...malas]), { fecha: "2026-09-30", referencia: "566029" });
+    assert.equal(r.movimientos.length, buenas.length);
+    assert.equal(r.ignoradas.otraReferencia, malas.length);
+  });
+
+  test("una fecha imposible o vacía no entra en el día: se omite y hay que reconocerlo", () => {
+    const filas = parsearCSV("Fecha,Monto\n30/09/2026,100\n31/02/2026,900\n,50");
+    const r = interpretarReporte(filas, { fecha: "2026-09-30" });
+    assert.deepEqual(r.movimientos.map((m) => m.monto), [100]);
+    assert.equal(r.ignoradas.fechaIlegible, 2);
+    assert.ok(r.confirmaciones.some((c) => c.includes("2 fila(s) con fecha ilegible")));
+  });
+
+  test("lo que no se pudo verificar (referencia o fecha) pide confirmación", () => {
+    const sinRef = interpretarReporte(parsearCSV("Fecha,Monto\n30/09/2026,100"), { fecha: "2026-09-30", referencia: "566029" });
+    assert.ok(sinRef.confirmaciones.some((c) => c.includes("referencia 566029")));
+    const sinFecha = interpretarReporte(parsearCSV("Autorización,Monto\nA1,100"), { fecha: "2026-09-30" });
+    assert.ok(sinFecha.confirmaciones.some((c) => c.includes("fecha")));
+    const limpio = interpretarReporte(parsearCSV(CSV_GETNET), { fecha: "2026-09-30", referencia: "566029" });
+    assert.deepEqual(limpio.confirmaciones, []);
+  });
+});
+
+describe("Tablas HTML y XML con extensión .xls", () => {
+  const HTML = "<html><body><table><tr><th>Afiliación</th><th>Fecha</th><th>Autorización</th><th>Monto</th></tr>"
+    + "<tr><td>566029</td><td>30/09/2026</td><td>A1</td><td>$1,150.50</td></tr>"
+    + "<tr><td>566029</td><td>30/09/2026</td><td>A&amp;2</td><td>75.00</td></tr></table></body></html>";
+
+  test("se lee la tabla HTML y se interpreta igual", async () => {
+    const tabla = await leerArchivoTabla("reporte.xls", new TextEncoder().encode(HTML));
+    assert.equal(tabla[1][2], "A1");
+    const r = interpretarReporte(tabla, { fecha: "2026-09-30", referencia: "566029" });
+    assert.deepEqual(r.movimientos.map((m) => [m.monto, m.autorizacion]), [[1150.5, "A1"], [75, "A&2"]]);
+  });
+
+  test("y el XML de Excel 2003", () => {
+    const xml = '<?xml version="1.0"?><Workbook><Worksheet><Table><Row><Cell><Data>Fecha</Data></Cell><Cell><Data>Monto</Data></Cell></Row><Row><Cell><Data>30/09/2026</Data></Cell><Cell><Data>100</Data></Cell></Row></Table></Worksheet></Workbook>';
+    assert.deepEqual(leerTablaMarcada(xml), [["Fecha", "Monto"], ["30/09/2026", "100"]]);
+  });
+
+  test("un .xls binario antiguo sigue dando un error claro", async () => {
+    await assert.rejects(leerArchivoTabla("r.xls", Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1])), /\.xlsx|CSV/);
   });
 });

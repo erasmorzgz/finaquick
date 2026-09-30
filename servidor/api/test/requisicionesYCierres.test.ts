@@ -231,6 +231,31 @@ describe("Requisición: quién puede aprobarla o rechazarla", () => {
     assert.equal(r.cuerpo.motivoRechazo, "Ya hay existencias");
   });
 
+  test("a quien se le redujo el acceso a solo consulta (o se le cambió el rol) después del envío ya no puede resolverla", async () => {
+    const { cuerpo } = await enviar(solicitante, "POST", "/requisiciones", { servicioId, articulos: ARTICULOS, destinatarioId: finanzas.id });
+    const cambiarAcceso = (soloConsulta: boolean) =>
+      enviar(admin, "PATCH", `/usuarios/${finanzas.id}`, { serviciosSoloConsulta: soloConsulta ? [servicioId] : [] });
+    assert.equal((await cambiarAcceso(true)).status, 200);
+    const sinAcceso = await enviar(finanzas, "PATCH", `/requisiciones/${cuerpo.id}`, { estado: "aprobada" });
+    assert.equal(sinAcceso.status, 409, "solo consulta: ya no puede aprobar");
+    assert.equal((await cambiarAcceso(false)).status, 200);
+    assert.equal((await enviar(admin, "POST", `/usuarios/${finanzas.id}/rol`, { rol: "personal" })).status, 200);
+    const sinRol = await enviar(finanzas, "PATCH", `/requisiciones/${cuerpo.id}`, { estado: "aprobada" });
+    assert.equal(sinRol.status, 409, "sin el rol de finanzas: ya no puede aprobar");
+    assert.equal((await enviar(admin, "POST", `/usuarios/${finanzas.id}/rol`, { rol: "finanzas" })).status, 200);
+    // Recuperado el acceso, vuelve a poder.
+    assert.equal((await enviar(finanzas, "PATCH", `/requisiciones/${cuerpo.id}`, { estado: "aprobada" })).status, 200);
+  });
+
+  test("quien la pidió y quedó de solo consulta ya no puede reenviarla", async () => {
+    const { cuerpo } = await enviar(sinFirma, "POST", "/requisiciones", { servicioId, articulos: ARTICULOS });
+    await enviar(admin, "PATCH", `/usuarios/${sinFirma.id}`, { serviciosSoloConsulta: [servicioId] });
+    const envio = await enviar(sinFirma, "PATCH", `/requisiciones/${cuerpo.id}/enviar`, { destinatarioId: admin.id });
+    assert.equal(envio.status, 409);
+    await enviar(admin, "PATCH", `/usuarios/${sinFirma.id}`, { serviciosSoloConsulta: [] });
+    assert.equal((await enviar(sinFirma, "PATCH", `/requisiciones/${cuerpo.id}/enviar`, { destinatarioId: admin.id })).status, 200);
+  });
+
   test("firmar o sellar exige tenerlos guardados", async () => {
     const { cuerpo } = await enviar(solicitante, "POST", "/requisiciones", { servicioId, articulos: ARTICULOS, destinatarioId: admin.id });
     await enviar(admin, "PATCH", `/usuarios/${admin.id}`, { selloUrl: null });
@@ -378,6 +403,17 @@ async function cobro(servicio: string, total: number, formaPago: string, estado 
   );
   return folio;
 }
+async function cobroHaceDias(servicio: string, total: number, formaPago: string, dias: number) {
+  const folio = `T${String(++folioTicket).padStart(4, "0")}`;
+  await consultar(
+    `insert into tickets (service_id, folio, nombre, identificador, tipo_usuario, categoria, procedimientos, total, estado, forma_pago, creado_por, fecha)
+     values ('${servicio}', '${folio}', 'Cliente ${folio}', '1', 'Externo', 'General', '[]', ${total}, 'pagado', '${formaPago}', '${admin.id}', now() - interval '${dias} days')`
+  );
+  return folio;
+}
+const diaHaceDias = (dias: number) => { const d = new Date(Date.now() - dias * 86_400_000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const enviarCorte = (u: Usuario, extra: object = {}) =>
+  enviar(u, "POST", "/cierres-caja/enviar", { servicioId: servicioCierres, fecha: HOY, paraId: finanzas.id, ...extra });
 const venta = (monto: number, autorizacion?: string) => ({ monto, tipo: "venta", autorizacion });
 const conciliar = (u: Usuario, movimientos: unknown, extra: object = {}) =>
   enviar(u, "POST", "/cierres-caja/conciliar", { servicioId: servicioCierres, fecha: HOY, referencia: "566029", archivoNombre: "getnet.csv", archivoHash: "abc123", movimientos, ...extra });
@@ -396,6 +432,8 @@ describe("Cierre de caja: conciliación con Getnet", () => {
     }
     const acceso = await consultar(`select solo_consulta from service_access where user_id = '${soloLectura.id}' and service_id = '${servicioCierres}'`);
     assert.equal(acceso.trim(), "t", "la cuenta de solo consulta debe quedar de solo consulta");
+    // Con referencia de Getnet, el corte solo se envía comparado y aprobado.
+    assert.equal((await enviar(admin, "PATCH", `/servicios/${servicioCierres}`, { referenciaGetnet: "566029" })).status, 200);
     // El sistema tiene dos cobros con tarjeta hoy; el de efectivo y el
     // crédito pendiente NO cuentan.
     await cobro(servicioCierres, 150, "Tarjeta de débito");
@@ -452,18 +490,30 @@ describe("Cierre de caja: conciliación con Getnet", () => {
     assert.deepEqual(sin.cuerpo, { cierre: null, vigente: false });
   });
 
-  test("enviar un corte aprobado lo marca como enviado", async () => {
+  test("enviar un corte aprobado: el servidor arma el documento, lo guarda para quien lo recibe y lo marca como enviado", async () => {
+    const { status, cuerpo } = await enviarCorte(solicitante, { mensaje: "Corte del día" });
+    assert.equal(status, 200, JSON.stringify(cuerpo));
     const { cuerpo: c } = await enviar(solicitante, "GET", `/cierres-caja?servicioId=${servicioCierres}&fecha=${HOY}`);
-    const { status, cuerpo } = await enviar(solicitante, "POST", `/cierres-caja/${c.cierre.id}/enviado`);
-    assert.equal(status, 200);
-    assert.ok(cuerpo.cierre.enviadoEn);
+    assert.ok(c.cierre.enviadoEn);
+    const contenido = await consultar(`select contenido from archivos_enviados where service_id = '${servicioCierres}' and para_id = '${finanzas.id}' order by fecha desc limit 1`);
+    assert.match(contenido, /Total del día,1469\.5/); // 150 + 320.50 + 999 en efectivo
+    assert.match(contenido, /Subtotal Tarjeta de débito,150/);
+    assert.match(contenido, /Conciliación con Getnet,Cuadra con Getnet/);
+    assert.ok(!contenido.includes("555"), "el crédito pendiente no es un cobro");
+  });
+
+  test("el documento sale de los datos del servidor: lo que mande el cliente no entra", async () => {
+    const { cuerpo } = await enviarCorte(solicitante, { contenido: "Folio,Total\nFALSO,1", nombreArchivo: "otro.csv", tipo: "Otra cosa" });
+    assert.equal(typeof cuerpo.id, "string");
+    const falso = await consultar(`select count(*) from archivos_enviados where contenido like '%FALSO%'`);
+    assert.equal(falso.trim(), "0");
   });
 
   test("si cambian los cobros con tarjeta después, la comparación deja de valer y no se puede enviar", async () => {
     await cobro(servicioCierres, 45, "Tarjeta de débito");
     const { cuerpo: c } = await enviar(solicitante, "GET", `/cierres-caja?servicioId=${servicioCierres}&fecha=${HOY}`);
     assert.equal(c.vigente, false);
-    const { status, cuerpo } = await enviar(solicitante, "POST", `/cierres-caja/${c.cierre.id}/enviado`);
+    const { status, cuerpo } = await enviarCorte(solicitante);
     assert.equal(status, 409);
     assert.match(cuerpo.error, /cambiaron/);
     // Al subirlo de nuevo con el cobro nuevo, vuelve a valer (y el envío anterior se anula).
@@ -472,12 +522,43 @@ describe("Cierre de caja: conciliación con Getnet", () => {
     assert.equal(nuevo.cuerpo.cierre.enviadoEn, undefined);
   });
 
+  test("un cambio que deja igual la suma y la cantidad (100+200 → 150+150) también invalida la comparación", async () => {
+    // Un día aparte, con dos cobros de 100 y 200.
+    const fecha = diaHaceDias(5);
+    const a = await cobroHaceDias(servicioCierres, 100, "Tarjeta de débito", 5);
+    await cobroHaceDias(servicioCierres, 200, "Tarjeta de débito", 5);
+    const comparado = await conciliar(solicitante, [venta(100), venta(200)], { fecha });
+    assert.equal(comparado.cuerpo.cierre.estado, "aprobado");
+    // Corrección directa de datos: misma suma (300) y misma cantidad (2).
+    await consultar(`update tickets set total = 150 where folio = '${a}'; update tickets set total = 150 where service_id = '${servicioCierres}' and total = 200 and fecha < now() - interval '4 days'`);
+    const { cuerpo: c } = await enviar(solicitante, "GET", `/cierres-caja?servicioId=${servicioCierres}&fecha=${fecha}`);
+    assert.equal(c.vigente, false, "la suma y la cantidad no cambiaron, pero los importes sí");
+    const envio = await enviarCorte(solicitante, { fecha });
+    assert.equal(envio.status, 409);
+    const aprobar = await enviar(admin, "POST", `/cierres-caja/${c.cierre.id}/aprobar`, { observacion: "no debería poder aprobarse" });
+    assert.equal(aprobar.status, 409); // ya está aprobado (o desactualizado): nunca 200
+  });
+
   test("un corte con diferencia no se puede enviar", async () => {
     const { cuerpo } = await conciliar(solicitante, [venta(320.5), venta(150), venta(45), venta(10)]);
     assert.equal(cuerpo.cierre.estado, "no_aprobado");
-    const { status, cuerpo: r } = await enviar(solicitante, "POST", `/cierres-caja/${cuerpo.cierre.id}/enviado`);
+    const { status, cuerpo: r } = await enviarCorte(solicitante);
     assert.equal(status, 409);
     assert.match(r.error, /no está aprobado/);
+  });
+
+  test("un corte sin comparar (con cobros con tarjeta) no se puede enviar", async () => {
+    await cobroHaceDias(servicioCierres, 80, "Tarjeta de crédito", 2);
+    const { status, cuerpo } = await enviarCorte(solicitante, { fecha: diaHaceDias(2) });
+    assert.equal(status, 409);
+    assert.match(cuerpo.error, /todavía no se compara/);
+  });
+
+  test("un día solo con efectivo se envía sin comparar; uno sin pagos da 400", async () => {
+    await cobroHaceDias(servicioCierres, 120, "Efectivo", 3);
+    assert.equal((await enviarCorte(solicitante, { fecha: diaHaceDias(3) })).status, 200);
+    const sinPagos = await enviarCorte(solicitante, { fecha: "2020-01-01" });
+    assert.equal(sinPagos.status, 400);
   });
 
   test("solo un administrador lo aprueba con diferencia, y con una razón", async () => {
@@ -491,15 +572,32 @@ describe("Cierre de caja: conciliación con Getnet", () => {
     assert.equal(ok.cuerpo.cierre.estado, "aprobado_con_diferencia");
     assert.equal(ok.cuerpo.cierre.aprobadorNombre, "Admin Req");
     assert.equal((await enviar(admin, "POST", `/cierres-caja/${id}/aprobar`, { observacion: "otra vez aprobado" })).status, 409);
-    const envio = await enviar(solicitante, "POST", `/cierres-caja/${id}/enviado`);
+    const envio = await enviarCorte(solicitante);
     assert.equal(envio.status, 200);
+    const contenido = await consultar(`select contenido from archivos_enviados where service_id = '${servicioCierres}' order by fecha desc limit 1`);
+    assert.match(contenido, /Aprobado con diferencia \(diferencia 10\.00\)/);
   });
 
-  test("una cuenta de solo consulta lo ve pero no puede conciliarlo ni marcarlo como enviado", async () => {
+  test("una cuenta de solo consulta lo ve pero no puede conciliarlo ni enviarlo", async () => {
     const intento = await conciliar(soloLectura, [venta(1)]);
     assert.equal(intento.status, 403, JSON.stringify(intento.cuerpo).slice(0, 300));
-    const { cuerpo: c } = await enviar(soloLectura, "GET", `/cierres-caja?servicioId=${servicioCierres}&fecha=${HOY}`);
-    assert.equal((await enviar(soloLectura, "POST", `/cierres-caja/${c.cierre.id}/enviado`)).status, 403);
+    const envio = await enviarCorte(soloLectura);
+    assert.equal(envio.status, 403);
+  });
+
+  test("no se puede eludir la puerta enviando el corte por POST /archivos", async () => {
+    const base = { orgId, paraId: finanzas.id, servicioId: servicioCierres, nombreArchivo: "corte.csv", contenido: "Folio,Total\nX,1" };
+    // Con el nombre del corte, en cualquier capitalización o con acentos: rechazado.
+    for (const tipo of ["Cierre de caja", "cierre DE caja", "  Cierre de caja  ", "CIERRE-DE-CAJA"]) {
+      const { status, cuerpo } = await enviar(solicitante, "POST", "/archivos", { ...base, tipo });
+      assert.equal(status, 409, tipo);
+      assert.match(cuerpo.error, /se envía desde su pantalla/);
+    }
+    // Un archivo cualquiera sigue pudiendo enviarse, y un servicio SIN referencia de Getnet conserva el envío de siempre.
+    assert.equal((await enviar(solicitante, "POST", "/archivos", { ...base, tipo: "Otro reporte" })).status, 200);
+    const sinGetnet = (await admin.cliente.pedirJson<{ id: string }>("/servicios", { method: "POST", body: JSON.stringify({ nombre: "Sin terminal", icono: "building", orgId }) })).cuerpo.id;
+    await enviar(admin, "PATCH", `/usuarios/${solicitante.id}`, { servicioIds: [servicioId, servicioCierres, sinGetnet], serviciosSoloConsulta: [] });
+    assert.equal((await enviar(solicitante, "POST", "/archivos", { ...base, servicioId: sinGetnet, tipo: "Cierre de caja" })).status, 200);
   });
 
   test("otra organización no ve ese servicio ni sus cierres", async () => {
@@ -550,9 +648,11 @@ describe("Cierre de caja: conciliación con Getnet", () => {
   });
 
   test("un cierre que no existe da 404 y un id mal formado 400", async () => {
-    assert.equal((await enviar(admin, "POST", "/cierres-caja/00000000-0000-4000-8000-000000000000/enviado")).status, 404);
+    assert.equal((await enviar(admin, "POST", "/cierres-caja/enviar", { servicioId: "00000000-0000-4000-8000-000000000000", fecha: HOY, paraId: finanzas.id })).status, 404);
     assert.equal((await enviar(admin, "POST", "/cierres-caja/00000000-0000-4000-8000-000000000000/aprobar", { observacion: "una razón suficientemente larga" })).status, 404);
-    assert.equal((await enviar(admin, "POST", "/cierres-caja/abc/enviado")).status, 400);
+    for (const cuerpo of [{}, { servicioId: servicioCierres, fecha: "2026-02-30", paraId: finanzas.id }, { servicioId: servicioCierres, fecha: HOY, paraId: "abc" }, { servicioId: servicioCierres, fecha: HOY, paraId: finanzas.id, mensaje: 7 }]) {
+      assert.equal((await enviar(admin, "POST", "/cierres-caja/enviar", cuerpo)).status, 400, JSON.stringify(cuerpo));
+    }
   });
 
   test("consultar con parámetros malos da 400", async () => {

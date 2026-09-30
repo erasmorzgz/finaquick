@@ -216,9 +216,30 @@ app.use("/api", rutas);
 // sano. Pensado para que algo externo lo revise cada cierto tiempo
 // (un cron con curl, una herramienta de monitoreo si algún día la
 // institución agrega una) y avise si dos o tres seguidas fallan.
+// Columnas que agregó la actualización de estructura más reciente
+// (servidor/actualizar_esquema_20260930.sql). Si una base de una versión
+// anterior no la tiene, la app fallaría más tarde sin explicar por qué.
+async function esquemaAlDia(): Promise<boolean> {
+  const { rows } = await pool.query(
+    `select count(*)::int as n from information_schema.columns
+     where table_schema = 'public' and (
+       (table_name = 'cierres_caja' and column_name = 'huella_sistema') or
+       (table_name = 'requisiciones' and column_name = 'articulos') or
+       (table_name = 'profiles' and column_name = 'sello_url') or
+       (table_name = 'services' and column_name = 'referencia_getnet') or
+       (table_name = 'organizations' and column_name = 'encabezado_documentos'))`
+  );
+  return rows[0].n === 5;
+}
+const AVISO_ESQUEMA = "La base de datos es de una versión anterior: ejecuta servidor/actualizar_esquema_20260930.sql (ver LOCAL_SETUP.md).";
+
 app.get("/api/salud", async (_req, res) => {
   try {
     await pool.query("select 1");
+    if (!(await esquemaAlDia())) {
+      registro.error(AVISO_ESQUEMA);
+      return res.status(503).json({ ok: false, baseDeDatos: "conectada", esquema: "desactualizado", aviso: AVISO_ESQUEMA });
+    }
     res.json({ ok: true, baseDeDatos: "conectada", segundosActivo: Math.round(process.uptime()) });
   } catch (error) {
     registro.error("Chequeo de salud: la base de datos no respondió", error);
@@ -250,6 +271,7 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 });
 
 const puerto = Number(process.env.PORT) || 4000;
+esquemaAlDia().then((ok) => { if (!ok) registro.error(AVISO_ESQUEMA); }).catch(() => {});
 const servidor = app.listen(puerto, () => {
   // No dice "localhost" a propósito — este mismo mensaje aparece igual
   // corriendo en la máquina de alguien (donde sí es localhost) que en

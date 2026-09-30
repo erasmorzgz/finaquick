@@ -126,14 +126,16 @@ export default function CashClose() {
   const puedeEnviar = !exigeConciliacion || conciliado;
   const puedeOperar = !!servicioActual && !user?.serviciosSoloConsulta?.includes(servicioActual.id);
 
+  // Un servicio con referencia de Getnet envía su corte por una ruta que el
+  // servidor valida (aprobado y vigente) y en la que arma el documento él
+  // mismo — el día completo, no la selección de folios de la pantalla.
+  const enviaElServidor = !!servicioActual?.referenciaGetnet;
   async function alEnviar() {
-    // Deja constancia de que este corte ya se envió.
-    if (conciliacion?.cierre && conciliado) {
-      try {
-        setCierreInfo({ clave: claveCierre, datos: await db.marcarCierreEnviado(conciliacion.cierre.id) });
-      } catch {
-        /* el archivo ya se envió; la marca es solo constancia */
-      }
+    if (!servicioActual) return;
+    try {
+      setCierreInfo({ clave: claveCierre, datos: await db.obtenerCierreCaja(servicioActual.id, fecha) });
+    } catch {
+      /* el envío ya se hizo; esto solo refresca la marca de «enviado» */
     }
   }
 
@@ -510,6 +512,7 @@ export default function CashClose() {
           nombreArchivo={`${slug(label)}-${slug(servicioActual.nombre)}-${fecha}.csv`}
           contenido={csv}
           onEnviado={alEnviar}
+          enviar={enviaElServidor ? ({ paraId, mensaje }) => db.enviarCorteCaja({ servicioId: servicioActual.id, fecha, paraId, mensaje }) : undefined}
         />
       )}
     </div>

@@ -236,10 +236,33 @@ export async function leerXlsx(bytes: Uint8Array): Promise<string[][]> {
   return filas;
 }
 
-/** Lee el archivo que se subió (CSV, TXT o Excel .xlsx) como una tabla. */
+function textoDeXml(fragmento: string): string {
+  return entidadesXml(fragmento.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim();
+}
+
+/** Muchos portales entregan con extensión .xls una tabla HTML (o un XML de
+ * Excel 2003): se lee la tabla sin más. */
+export function leerTablaMarcada(texto: string): string[][] {
+  const esHtml = /<tr[\s>]/i.test(texto);
+  const patronFila = esHtml ? /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi : /<Row\b[^>]*>([\s\S]*?)<\/Row>/g;
+  const patronCelda = esHtml ? /<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi : /<Cell\b[^>]*>([\s\S]*?)<\/Cell>/g;
+  const filas: string[][] = [];
+  for (const fila of texto.matchAll(patronFila)) {
+    const celdas = [...fila[1].matchAll(patronCelda)].map((c) => textoDeXml(c[1]));
+    if (celdas.some((c) => c !== "")) filas.push(celdas);
+  }
+  return filas;
+}
+
+/** Lee el archivo que se subió (CSV, TXT, Excel .xlsx o tabla HTML/XML) como una tabla. */
 export async function leerArchivoTabla(nombre: string, bytes: Uint8Array): Promise<string[][]> {
   const esZip = bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
   if (esZip) return leerXlsx(bytes);
+  const inicio = new TextDecoder().decode(bytes.subarray(0, 600));
+  if (/^\s*(<\?xml|<!doctype|<html|<table)/i.test(inicio)) {
+    const tabla = leerTablaMarcada(decodificarTexto(bytes));
+    if (tabla.length > 0) return tabla;
+  }
   if (/\.xls$/i.test(nombre) || (bytes.length > 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf)) {
     throw new Error("Ese es un Excel antiguo (.xls). Ábrelo y guárdalo como .xlsx o como CSV.");
   }
@@ -428,7 +451,10 @@ export interface ReporteInterpretado {
   encabezado: string[];
   filaEncabezado: number;
   columnas: Columnas;
-  ignoradas: { otraFecha: number; otraReferencia: number; rechazadas: number; sinMonto: number };
+  ignoradas: { otraFecha: number; otraReferencia: number; rechazadas: number; sinMonto: number; fechaIlegible: number };
+  /** Cosas que no se pudieron verificar y que quien sube el reporte debe
+   * reconocer antes de comparar (fechas ilegibles, referencia o fecha sin verificar). */
+  confirmaciones: string[];
   /** Si se encontró la referencia del servicio en el archivo (o no había que buscarla). */
   referenciaEncontrada: boolean;
   /** Días que trae el archivo, para avisar si es de otro día. */
@@ -437,6 +463,15 @@ export interface ReporteInterpretado {
 }
 
 const SIN_LETRAS_NI_CEROS = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "").replace(/^0+/, "");
+// Una referencia coincide si es IGUAL a la celda, o a una de sus palabras
+// ("Afiliación 566029", "566029 - Odontología"), sin importar ceros a la
+// izquierda. Nunca por contener la secuencia dentro de otra ("15660299",
+// "ABC566029XYZ" son otras referencias).
+function coincideReferencia(celda: string, ref: string): boolean {
+  if (ref === "") return false;
+  if (SIN_LETRAS_NI_CEROS(celda) === ref) return true;
+  return celda.split(/[^A-Za-z0-9]+/).filter(Boolean).some((t) => SIN_LETRAS_NI_CEROS(t) === ref);
+}
 
 export function interpretarReporte(
   filas: string[][],
@@ -453,8 +488,8 @@ export function interpretarReporte(
   const columnas: Columnas = { ...detectadas, ...opciones.columnas, referencia: opciones.columnas?.referencia ?? detectadas.referencia };
   const vacio = (): ReporteInterpretado => ({
     movimientos: [], encabezado, filaEncabezado, columnas,
-    ignoradas: { otraFecha: 0, otraReferencia: 0, rechazadas: 0, sinMonto: 0 },
-    referenciaEncontrada: true, fechasEnArchivo: [], avisos,
+    ignoradas: { otraFecha: 0, otraReferencia: 0, rechazadas: 0, sinMonto: 0, fechaIlegible: 0 },
+    confirmaciones: [], referenciaEncontrada: true, fechasEnArchivo: [], avisos,
   });
   if (columnas.monto === undefined) {
     avisos.push("No se encontró la columna del monto. Elígela abajo.");
@@ -463,10 +498,7 @@ export function interpretarReporte(
 
   const datos = filas.slice(filaEncabezado + 1);
   const ref = opciones.referencia ? SIN_LETRAS_NI_CEROS(opciones.referencia) : "";
-  const celdaCoincide = (celda: string) => {
-    const c = SIN_LETRAS_NI_CEROS(celda);
-    return c !== "" && (c === ref || (ref.length >= 5 && c.includes(ref)));
-  };
+  const celdaCoincide = (celda: string) => coincideReferencia(celda, ref);
 
   // ¿Qué filas son de la referencia de este servicio?
   let cumpleReferencia: (fila: string[]) => boolean = () => true;
@@ -487,7 +519,7 @@ export function interpretarReporte(
     }
   }
 
-  const ignoradas = { otraFecha: 0, otraReferencia: 0, rechazadas: 0, sinMonto: 0 };
+  const ignoradas = { otraFecha: 0, otraReferencia: 0, rechazadas: 0, sinMonto: 0, fechaIlegible: 0 };
   const fechas = new Set<string>();
   const candidatos: { movimiento: MovimientoGetnet; fecha: string | null }[] = [];
   for (const fila of datos) {
@@ -512,6 +544,12 @@ export function interpretarReporte(
       continue;
     }
     const { fecha, hora: horaDeFecha } = columnas.fecha !== undefined ? parsearFechaHora(fila[columnas.fecha] ?? "") : { fecha: null, hora: undefined };
+    // Con columna de fecha, una fila cuya fecha no se puede leer (vacía o
+    // imposible, como 31/02/2026) no se da por buena: se omite y se avisa.
+    if (columnas.fecha !== undefined && fecha === null) {
+      ignoradas.fechaIlegible++;
+      continue;
+    }
     if (fecha) fechas.add(fecha);
     let hora = horaDeFecha;
     if (columnas.hora !== undefined && fila[columnas.hora]) {
@@ -525,6 +563,12 @@ export function interpretarReporte(
     candidatos.push({ movimiento: { monto: Math.round(Math.abs(monto) * 100) / 100, tipo: cancelacion ? "cancelacion" : "venta", autorizacion, hora }, fecha });
   }
 
+  const confirmaciones: string[] = [];
+  if (ignoradas.fechaIlegible > 0) {
+    confirmaciones.push(`${ignoradas.fechaIlegible} fila(s) con fecha ilegible o vacía se omitieron: revísalas en el archivo antes de comparar.`);
+  }
+  if (!referenciaEncontrada && ref) confirmaciones.push(`No se pudo verificar la referencia ${opciones.referencia} en el archivo.`);
+  if (columnas.fecha === undefined) confirmaciones.push("No se pudo verificar la fecha: el archivo no trae una columna de fecha.");
   const fechasEnArchivo = [...fechas].sort();
   let movimientos: MovimientoGetnet[];
   if (columnas.fecha !== undefined && fechas.size > 0) {
@@ -549,5 +593,6 @@ export function interpretarReporte(
   if (ignoradas.rechazadas > 0) avisos.push(`Se omitieron ${ignoradas.rechazadas} operación(es) rechazada(s).`);
   if (movimientos.length > 5000) avisos.push("El reporte trae más de 5,000 movimientos: no se puede comparar completo.");
 
-  return { movimientos, encabezado, filaEncabezado, columnas, ignoradas, referenciaEncontrada, fechasEnArchivo, avisos };
+  if (ignoradas.fechaIlegible > 0) avisos.push(`${ignoradas.fechaIlegible} fila(s) con fecha ilegible o vacía se omitieron.`);
+  return { movimientos, encabezado, filaEncabezado, columnas, ignoradas, confirmaciones, referenciaEncontrada, fechasEnArchivo, avisos };
 }

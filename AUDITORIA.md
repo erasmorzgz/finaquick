@@ -15,8 +15,8 @@ con el código de invitación que imprimió el instalador, se cargaron los
 datos de ejemplo y se recorrieron las pantallas principales en un
 navegador: se creó un folio desde el formulario, se consultó a Quick y
 se imprimieron el cierre de caja y el reporte financiero. La suite de
-pruebas del servidor (242 pruebas, contra PostgreSQL real) y las del
-cliente (39: clasificador de Quick, lector del reporte de Getnet y
+pruebas del servidor (249 pruebas, contra PostgreSQL real) y las del
+cliente (45: clasificador de Quick, lector del reporte de Getnet y
 recuperación de folios) pasaron completas; `npm run lint` no reporta
 avisos, y `npm audit --omit=dev` reportó cero alertas en el cliente y en
 el servidor. Las pantallas nuevas se recorrieron en un navegador
@@ -35,6 +35,29 @@ análisis automático de accesibilidad: cero violaciones.
 - Actualización de una base ya instalada
   (`servidor/actualizar_esquema_20260930.sql`), que el instalador aplica
   solo cuando se conserva la base existente.
+
+**Correcciones de una segunda revisión externa** (sus cinco defectos se
+reprodujeron y se corrigieron, cada uno con una prueba que falla si se
+deshace la corrección):
+
+- Quien recibe una requisición y después queda de solo consulta (o pierde
+  el rol de finanzas) ya no puede aprobarla; tampoco reenviarla quien la
+  pidió si perdió el acceso completo.
+- El corte de un servicio con referencia de Getnet se envía por una ruta
+  propia que valida permiso, aprobación y vigencia en una sola
+  transacción y arma el documento en el servidor; el envío directo del
+  archivo con el nombre del corte se rechaza.
+- La referencia de Getnet se compara por igualdad, no por contención
+  (`15660299` ya no cuenta como `566029`).
+- Las filas con fecha vacía o imposible ya no entran en el día: se omiten
+  y hay que reconocerlo antes de comparar, igual que cuando no se pudo
+  verificar la referencia o la fecha.
+- La vigencia de la comparación usa una huella de cada cobro, no solo la
+  suma y la cantidad.
+- También: se leen los `.xls` que son tablas HTML/XML, la actualización de
+  la base se aplica aunque se conserve el `.env`, el servidor avisa si su
+  base es de una versión anterior, y la pantalla aclara que la
+  coincidencia con Getnet es por monto.
 
 **Correcciones incorporadas de una revisión externa** (una versión del
 proyecto revisada por separado, cuyos hallazgos se comprobaron uno a uno

@@ -496,6 +496,9 @@ export async function aprobarCierreConDiferencia(id: string, observacion: string
   return pedir(`/cierres-caja/${encodeURIComponent(id)}/aprobar`, { method: "POST", body: JSON.stringify({ observacion }) });
 }
 
-export async function marcarCierreEnviado(id: string): Promise<CierreCajaConVigencia> {
-  return pedir(`/cierres-caja/${encodeURIComponent(id)}/enviado`, { method: "POST" });
+// Envía el corte de caja de un día a un compañero. El servidor comprueba
+// el permiso y que esté aprobado y vigente, arma el documento con sus
+// propios datos y deja constancia, todo en una sola operación.
+export async function enviarCorteCaja(datos: { servicioId: string; fecha: string; paraId: string; mensaje?: string }): Promise<void> {
+  await pedir("/cierres-caja/enviar", { method: "POST", body: JSON.stringify(datos) });
 }

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 // Conciliación del cierre de caja: compara los cobros con tarjeta que
 // registró el sistema en un día contra los movimientos del reporte
 // diario de Getnet. Es lógica pura (sin base de datos ni red) para poder
@@ -105,4 +107,21 @@ export function conciliar(sistema: MovimientoSistema[], getnet: MovimientoGetnet
     cancelaciones: anuladas.map((c) => ({ monto: aPesos(c.centavos), autorizacion: c.autorizacion, hora: c.hora })),
     cuadra: diferenciaCentavos === 0 && soloSistema.length === 0 && soloGetnet.length === 0,
   };
+}
+
+/** Cobro con tarjeta del sistema, con lo que hace falta para fijar su huella. */
+export interface CobroParaHuella {
+  id: string;
+  total: number;
+  /** Fecha efectiva (pago o creación) en ISO, tal como la entrega PostgreSQL. */
+  fechaEfectiva: string;
+  formaPago: string;
+}
+
+/** Huella SHA-256 de los cobros: cualquier cambio de importe, de fecha, de
+ * forma de pago, o que entre o salga un cobro, la cambia — incluso si la
+ * suma y la cantidad quedan iguales (150+150 en lugar de 100+200). */
+export function huellaDeCobros(cobros: CobroParaHuella[]): string {
+  const lineas = cobros.map((c) => `${c.id}|${aCentavos(c.total)}|${c.fechaEfectiva}|${c.formaPago}`).sort();
+  return createHash("sha256").update(lineas.join("\n")).digest("hex");
 }

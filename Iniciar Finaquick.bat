@@ -228,6 +228,18 @@ if %errorlevel% neq 0 (
 
         echo servidor\api\.env generado con credenciales propias de esta instalacion.
         echo ^(Para conectar el login de Microsoft, edita ese archivo - ver LOCAL_SETUP.md^)
+    ) else (
+        rem -- Ya hay una instalacion: su .env se conserva. Si su base es de una
+        rem -- version anterior, se le agrega lo nuevo. Solo agrega, no borra.
+        psql -d finaquick_local -c "select 1" -w >nul 2>nul
+        if !errorlevel! equ 0 (
+            psql -v ON_ERROR_STOP=1 -q -d finaquick_local -f servidor\actualizar_esquema_20260930.sql > "%TEMP%\finaquick_esquema.log" 2>&1
+            if !errorlevel! neq 0 (
+                echo AVISO: no se pudo actualizar la estructura de la base - el detalle esta en %TEMP%\finaquick_esquema.log.
+            ) else (
+                echo La estructura de la base de datos esta al dia.
+            )
+        )
     )
     set DB_LISTA=1
 )

@@ -1,7 +1,9 @@
 -- Esquema para el servidor propio (servidor/api) — PostgreSQL puro, sin
--- ningún esquema ni extensión de terceros. La cuenta y la contraseña
--- viven en la propia tabla profiles, y la seguridad por fila usa una
--- variable de sesión que pone el servidor (app.usuario_actual).
+-- ningún esquema ni extensión de terceros. Es la contraparte de
+-- servidor/migraciones/ (que asume auth.users de Supabase): aquí la
+-- cuenta y la contraseña viven en la propia tabla profiles, y la
+-- seguridad por fila usa una variable de sesión que pone el servidor
+-- (app.usuario_actual) en vez de auth.uid().
 --
 -- Correr una sola vez, en una base de datos PostgreSQL vacía:
 --   psql "$DATABASE_URL" -f servidor/esquema_local.sql
@@ -119,6 +121,39 @@ begin
 end;
 $$;
 
+-- ¿Puede esta persona recibir una requisición de este servicio para
+-- revisarla? Un administrador (su rol es de toda la instalación); finanzas solo si tiene acceso
+-- completo al servicio y sigue en la organización. Es SECURITY DEFINER
+-- porque quien envía (personal) no puede leer el acceso de otra persona.
+create or replace function es_destinatario_valido(p_user_id uuid, p_service_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+begin
+  if not puede_acceder_servicio(p_service_id) then
+    return false;
+  end if;
+  return exists (
+    select 1 from profiles p
+    where p.id = p_user_id
+      and (
+        p.rol = 'admin'
+        or (p.rol = 'finanzas' and exists (
+          select 1
+          from service_access sa
+          join services s on s.id = sa.service_id
+          join org_members om on om.org_id = s.org_id and om.user_id = sa.user_id
+          where sa.service_id = p_service_id and sa.user_id = p.id and sa.solo_consulta = false
+        ))
+      )
+  );
+end;
+$$;
+
+
 -- ============================================================
 -- Organizaciones
 -- ============================================================
@@ -140,7 +175,7 @@ create policy "admin actualiza su organización" on organizations
 
 -- ============================================================
 -- Perfiles — aquí SÍ vive la cuenta completa (correo + contraseña),
--- sin ningún sistema de autenticación aparte que la maneje.
+-- porque no hay Supabase Auth que la maneje aparte.
 -- ============================================================
 create table profiles (
   id uuid primary key default gen_random_uuid(),
@@ -497,7 +532,18 @@ create policy "crear requisiciones con acceso de escritura al servicio" on requi
 create policy "admin o destinatario resuelve requisiciones de su organización" on requisiciones
   for update using (
     puede_acceder_servicio(service_id)
-    and (es_admin() or destinatario_id = usuario_actual() or solicitado_por = usuario_actual())
+    and (
+      es_admin()
+      -- El destinatario solo mientras siga pudiendo recibirla (rol y acceso
+      -- completo vigentes): reducirle el acceso a solo consulta, o cambiarle
+      -- el rol, le quita también las requisiciones que ya tenía asignadas.
+      or (destinatario_id = usuario_actual() and es_destinatario_valido(usuario_actual(), service_id))
+      -- Quien la solicitó, solo para reenviarla, y solo con acceso completo.
+      or (solicitado_por = usuario_actual() and exists (
+        select 1 from service_access
+        where service_id = requisiciones.service_id and user_id = usuario_actual() and solo_consulta = false
+      ))
+    )
   );
 
 -- ============================================================
@@ -519,6 +565,10 @@ create table cierres_caja (
   diferencia numeric(12,2) not null,
   movimientos_sistema integer not null default 0,
   movimientos_getnet integer not null default 0,
+  -- Huella (SHA-256) de los cobros con tarjeta del sistema al comparar:
+  -- identificador, importe en centavos, fecha efectiva y forma de pago de
+  -- cada uno. Si cambia cualquiera, la comparación deja de valer.
+  huella_sistema text,
   detalle jsonb not null default '{}'::jsonb,
   -- aprobado: coincide todo. no_aprobado: hay diferencias.
   -- aprobado_con_diferencia: un administrador lo autorizó pese a ellas
@@ -657,7 +707,8 @@ create index profiles_correo_idx on profiles (lower(correo));
 -- este script). "enable row level security" por sí solo exime al
 -- dueño; "force" lo obliga también a él. Necesario porque
 -- servidor/api se conecta con un solo rol para todo — no hay un rol
--- "dueño de las tablas" y otro distinto "de la aplicación".
+-- "dueño de las tablas" y otro distinto "de la aplicación" como en
+-- Supabase (authenticated/anon vs. postgres).
 -- ============================================================
 alter table organizations force row level security;
 alter table profiles force row level security;
@@ -1261,37 +1312,6 @@ $$;
 grant usage on schema public to finaquick_respaldo;
 grant select on all tables in schema public to finaquick_respaldo;
 
--- ¿Puede esta persona recibir una requisición de este servicio para
--- revisarla? Un administrador (su rol es de toda la instalación); finanzas solo si tiene acceso
--- completo al servicio y sigue en la organización. Es SECURITY DEFINER
--- porque quien envía (personal) no puede leer el acceso de otra persona.
-create or replace function es_destinatario_valido(p_user_id uuid, p_service_id uuid)
-returns boolean
-language plpgsql
-security definer
-set search_path = public
-stable
-as $$
-begin
-  if not puede_acceder_servicio(p_service_id) then
-    return false;
-  end if;
-  return exists (
-    select 1 from profiles p
-    where p.id = p_user_id
-      and (
-        p.rol = 'admin'
-        or (p.rol = 'finanzas' and exists (
-          select 1
-          from service_access sa
-          join services s on s.id = sa.service_id
-          join org_members om on om.org_id = s.org_id and om.user_id = sa.user_id
-          where sa.service_id = p_service_id and sa.user_id = p.id and sa.solo_consulta = false
-        ))
-      )
-  );
-end;
-$$;
 revoke execute on function es_destinatario_valido(uuid, uuid) from public;
 grant execute on function es_destinatario_valido(uuid, uuid) to finaquick_app;
 

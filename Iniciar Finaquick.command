@@ -219,6 +219,17 @@ EOF
     chmod 600 servidor/api/.env
     echo "servidor/api/.env generado con credenciales propias de esta instalación."
     echo "(Para conectar el login de Microsoft, edita ese archivo — ver LOCAL_SETUP.md)"
+  else
+    # Ya hay una instalación (su .env se conserva): si su base es de una
+    # versión anterior, se le agrega lo nuevo. Solo agrega, no borra, y se
+    # puede repetir; si la base está en otro lugar, simplemente no aplica.
+    if psql -d finaquick_local -c "select 1" -w >/dev/null 2>&1; then
+      if psql -v ON_ERROR_STOP=1 -q -d finaquick_local -f servidor/actualizar_esquema_20260930.sql >/tmp/finaquick_esquema.log 2>&1; then
+        echo "La estructura de la base de datos está al día."
+      else
+        echo "AVISO: no se pudo actualizar la estructura de la base — el detalle está en /tmp/finaquick_esquema.log."
+      fi
+    fi
   fi
 
   DB_LISTA=true

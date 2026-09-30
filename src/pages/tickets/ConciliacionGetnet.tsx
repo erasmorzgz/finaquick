@@ -42,6 +42,8 @@ export function ConciliacionGetnet({
   const [aprobando, setAprobando] = useState(false);
   const [observacion, setObservacion] = useState("");
   const [verCoinciden, setVerCoinciden] = useState(false);
+  // Reconocer lo que no se pudo verificar del archivo (fechas ilegibles, referencia o fecha sin comprobar).
+  const [reconozco, setReconozco] = useState(false);
 
   const referencia = servicio.referenciaGetnet;
   const cierre = info?.cierre ?? null;
@@ -60,6 +62,7 @@ export function ConciliacionGetnet({
     if (!archivo) return;
     setError(null);
     setLectura(null);
+    setReconozco(false);
     if (archivo.size > MAX_ARCHIVO) return setError("El archivo pesa más de 8 MB — descarga solo el día que necesitas.");
     setLeyendo(true);
     try {
@@ -186,6 +189,18 @@ export function ConciliacionGetnet({
                   ))}
                 </ul>
               )}
+              {reporte.confirmaciones.length > 0 && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900">
+                  <p className="mb-1 font-bold">Antes de comparar:</p>
+                  <ul className="mb-2 list-disc pl-5">
+                    {reporte.confirmaciones.map((c) => <li key={c}>{c}</li>)}
+                  </ul>
+                  <label className="flex items-start gap-2 font-semibold">
+                    <input type="checkbox" checked={reconozco} onChange={(e) => setReconozco(e.target.checked)} className="mt-0.5 h-4 w-4 accent-[var(--color-brand-500)]" />
+                    Lo revisé y quiero compararlo así
+                  </label>
+                </div>
+              )}
               <details open={reporte.columnas.monto === undefined}>
                 <summary className="cursor-pointer text-xs font-bold text-brand-700">¿No es la columna correcta? Cambiar columnas</summary>
                 <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -200,7 +215,7 @@ export function ConciliacionGetnet({
                 </div>
               </details>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" icon={<CircleCheck size={14} />} disabled={comparando || reporte.columnas.monto === undefined || reporte.movimientos.length > 5000} onClick={comparar}>
+                <Button size="sm" icon={<CircleCheck size={14} />} disabled={comparando || reporte.columnas.monto === undefined || reporte.movimientos.length > 5000 || (reporte.confirmaciones.length > 0 && !reconozco)} onClick={comparar}>
                   {comparando ? "Comparando…" : "Comparar con el corte"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setLectura(null)}>Descartar</Button>
@@ -247,6 +262,9 @@ function ResultadoCierre({ cierre, verCoinciden, onVerCoinciden }: { cierre: Cie
       )}
       {cuadra && (
         <p className="flex items-center gap-2 text-sm font-semibold text-[var(--color-good-text)]"><CircleCheck size={16} aria-hidden /> Los {coinciden.length} cobro(s) con tarjeta coinciden uno a uno con Getnet.</p>
+      )}
+      {coinciden.length > 0 && (
+        <p className="text-xs text-[var(--color-text-muted)]">La coincidencia es por monto: confirma que las cantidades cuadran, pero no que una autorización de Getnet corresponda a esa persona en concreto.</p>
       )}
       {coinciden.length > 0 && (
         <div>

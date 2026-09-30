@@ -474,9 +474,13 @@ autenticada y con permiso legítimo para generar folios.
   organización. Personal, finanzas sin acceso y personas inexistentes
   se rechazan con 400; nadie puede enviársela a sí mismo.
 - **Quién puede resolverla**: solo un administrador o la persona a quien
-  se le envió, y solo mientras siga pendiente (la condición va en el
-  propio `UPDATE`, no solo en la interfaz). Quien la solicitó puede
-  reenviarla mientras esté pendiente, pero no resolverla.
+  se le envió, y solo mientras siga pendiente **y siga pudiendo
+  recibirla**: rol de finanzas y acceso completo al servicio, comprobados
+  en el propio `UPDATE` y en la política SQL (`es_destinatario_valido`).
+  Si después del envío se le reduce a solo consulta o se le cambia el
+  rol, ya no puede aprobar lo que tenía asignado. Quien la solicitó puede
+  reenviarla mientras esté pendiente y conserve acceso completo, pero no
+  resolverla.
 - Los artículos se validan uno por uno (1 a 30, cantidad entera, texto
   sin caracteres nulos, enlace solo `http(s)://`, imagen solo
   PNG/JPG/WebP/GIF — **no SVG** — con tope por imagen y en conjunto). El
@@ -495,13 +499,29 @@ autenticada y con permiso legítimo para generar folios.
   Por eso queda constancia de quién lo subió, cuándo, con qué archivo, y
   las aprobaciones con diferencia exigen un administrador y un motivo,
   y quedan en la bitácora.
-- Si cambian los cobros con tarjeta después de comparar, la comparación
-  deja de valer: no se puede aprobar ni marcar como enviada hasta
-  repetirla. Una cuenta de solo consulta ve el resultado pero no puede
-  subir ni marcar el envío (la política SQL filtra el `UPDATE` a cero
-  filas, y la ruta lo trata como 403).
-- Enviar el corte es un archivo más: la puerta «solo se envía si cuadra»
-  está en la interfaz, no en `POST /archivos`.
+- **La comparación guarda una huella (SHA-256) de los cobros con
+  tarjeta**: identificador, importe en centavos, fecha efectiva y forma
+  de pago de cada uno. Si cambia cualquiera, aunque la suma y la cantidad
+  queden iguales (100+200 → 150+150), la comparación deja de valer y no se
+  puede aprobar ni enviar hasta repetirla. (Un cierre hecho antes de que
+  existiera la huella se compara por suma y cantidad.)
+- **El corte se envía por `POST /cierres-caja/enviar`, no por
+  `/archivos`**: en una sola transacción comprueba que quien lo envía
+  tenga acceso completo, que el corte esté aprobado y vigente (con el
+  cierre bloqueado), arma el documento con los datos del servidor — lo
+  que mande el cliente no entra — lo guarda para quien lo recibe y deja
+  constancia del envío y un evento en la bitácora. Un servicio con
+  referencia de Getnet no puede enviar un archivo con el nombre de su
+  corte por `POST /archivos` (la etiqueta cierra el camino directo; el
+  control es la ruta propia). Sin cobros con tarjeta ese día, el envío no
+  exige comparación.
+- El lector del reporte compara la referencia por igualdad (la celda o
+  una de sus palabras, sin ceros a la izquierda), nunca por contención:
+  `15660299` y `ABC566029XYZ` no son `566029`. Las filas con fecha vacía
+  o imposible se omiten y quien sube el reporte debe reconocerlo antes de
+  comparar; lo mismo si no se pudo verificar la referencia o la fecha.
+- Una cuenta de solo consulta ve el resultado pero no puede subir el
+  reporte ni enviar el corte.
 
 ## Protección de contenido generado por usuarios
 

@@ -22,65 +22,6 @@ alter table requisiciones add column if not exists firma_solicitante text;
 alter table requisiciones add column if not exists sello_solicitante text;
 alter table requisiciones add column if not exists sello_resolucion text;
 
-drop policy if exists "admin resuelve requisiciones de su organización" on requisiciones;
-drop policy if exists "admin o destinatario resuelve requisiciones de su organización" on requisiciones;
-create policy "admin o destinatario resuelve requisiciones de su organización" on requisiciones
-  for update using (
-    puede_acceder_servicio(service_id)
-    and (es_admin() or destinatario_id = usuario_actual() or solicitado_por = usuario_actual())
-  );
-
-create table if not exists cierres_caja (
-  id uuid primary key default gen_random_uuid(),
-  service_id uuid not null references services(id) on delete cascade,
-  fecha date not null,
-  referencia text,
-  archivo_nombre text,
-  archivo_hash text,
-  total_sistema numeric(12,2) not null,
-  total_getnet numeric(12,2) not null,
-  diferencia numeric(12,2) not null,
-  movimientos_sistema integer not null default 0,
-  movimientos_getnet integer not null default 0,
-  detalle jsonb not null default '{}'::jsonb,
-  estado text not null check (estado in ('aprobado', 'no_aprobado', 'aprobado_con_diferencia')),
-  observacion text,
-  aprobado_por uuid references profiles(id) on delete set null,
-  creado_por uuid references profiles(id) on delete set null,
-  creado_en timestamptz not null default now(),
-  actualizado_en timestamptz not null default now(),
-  enviado_en timestamptz,
-  unique (service_id, fecha)
-);
-alter table cierres_caja enable row level security;
-alter table cierres_caja force row level security;
-drop policy if exists "ver cierres de servicios a los que tienes acceso" on cierres_caja;
-create policy "ver cierres de servicios a los que tienes acceso" on cierres_caja
-  for select using (puede_acceder_servicio(service_id));
-drop policy if exists "conciliar cierres con acceso completo al servicio" on cierres_caja;
-create policy "conciliar cierres con acceso completo al servicio" on cierres_caja
-  for insert with check (
-    creado_por = usuario_actual()
-    and (
-      es_admin() or exists (
-        select 1 from service_access
-        where service_id = cierres_caja.service_id and user_id = usuario_actual() and solo_consulta = false
-      )
-    )
-  );
-drop policy if exists "actualizar cierres con acceso completo al servicio" on cierres_caja;
-create policy "actualizar cierres con acceso completo al servicio" on cierres_caja
-  for update using (
-    es_admin() or exists (
-      select 1 from service_access
-      where service_id = cierres_caja.service_id and user_id = usuario_actual() and solo_consulta = false
-    )
-  );
-
-grant select, insert, update, delete on cierres_caja to finaquick_app;
-grant update (nombre, telefono, foto_url, firma_url, sello_url, bio, password_hash, totp_secret, totp_secret_pendiente, totp_habilitado, sesion_valida_desde, debe_cambiar_password) on profiles to finaquick_app;
-grant select on cierres_caja to finaquick_respaldo;
-
 -- ¿Puede esta persona recibir una requisición de este servicio para
 -- revisarla? Un administrador (su rol es de toda la instalación); finanzas solo si tiene acceso
 -- completo al servicio y sigue en la organización. Es SECURITY DEFINER
@@ -114,3 +55,75 @@ end;
 $$;
 revoke execute on function es_destinatario_valido(uuid, uuid) from public;
 grant execute on function es_destinatario_valido(uuid, uuid) to finaquick_app;
+
+drop policy if exists "admin resuelve requisiciones de su organización" on requisiciones;
+drop policy if exists "admin o destinatario resuelve requisiciones de su organización" on requisiciones;
+create policy "admin o destinatario resuelve requisiciones de su organización" on requisiciones
+  for update using (
+    puede_acceder_servicio(service_id)
+    and (
+      es_admin()
+      -- El destinatario solo mientras siga pudiendo recibirla (rol y acceso
+      -- completo vigentes): reducirle el acceso a solo consulta, o cambiarle
+      -- el rol, le quita también las requisiciones que ya tenía asignadas.
+      or (destinatario_id = usuario_actual() and es_destinatario_valido(usuario_actual(), service_id))
+      -- Quien la solicitó, solo para reenviarla, y solo con acceso completo.
+      or (solicitado_por = usuario_actual() and exists (
+        select 1 from service_access
+        where service_id = requisiciones.service_id and user_id = usuario_actual() and solo_consulta = false
+      ))
+    )
+  );
+
+create table if not exists cierres_caja (
+  id uuid primary key default gen_random_uuid(),
+  service_id uuid not null references services(id) on delete cascade,
+  fecha date not null,
+  referencia text,
+  archivo_nombre text,
+  archivo_hash text,
+  total_sistema numeric(12,2) not null,
+  total_getnet numeric(12,2) not null,
+  diferencia numeric(12,2) not null,
+  movimientos_sistema integer not null default 0,
+  movimientos_getnet integer not null default 0,
+  huella_sistema text,
+  detalle jsonb not null default '{}'::jsonb,
+  estado text not null check (estado in ('aprobado', 'no_aprobado', 'aprobado_con_diferencia')),
+  observacion text,
+  aprobado_por uuid references profiles(id) on delete set null,
+  creado_por uuid references profiles(id) on delete set null,
+  creado_en timestamptz not null default now(),
+  actualizado_en timestamptz not null default now(),
+  enviado_en timestamptz,
+  unique (service_id, fecha)
+);
+alter table cierres_caja add column if not exists huella_sistema text;
+alter table cierres_caja enable row level security;
+alter table cierres_caja force row level security;
+drop policy if exists "ver cierres de servicios a los que tienes acceso" on cierres_caja;
+create policy "ver cierres de servicios a los que tienes acceso" on cierres_caja
+  for select using (puede_acceder_servicio(service_id));
+drop policy if exists "conciliar cierres con acceso completo al servicio" on cierres_caja;
+create policy "conciliar cierres con acceso completo al servicio" on cierres_caja
+  for insert with check (
+    creado_por = usuario_actual()
+    and (
+      es_admin() or exists (
+        select 1 from service_access
+        where service_id = cierres_caja.service_id and user_id = usuario_actual() and solo_consulta = false
+      )
+    )
+  );
+drop policy if exists "actualizar cierres con acceso completo al servicio" on cierres_caja;
+create policy "actualizar cierres con acceso completo al servicio" on cierres_caja
+  for update using (
+    es_admin() or exists (
+      select 1 from service_access
+      where service_id = cierres_caja.service_id and user_id = usuario_actual() and solo_consulta = false
+    )
+  );
+
+grant select, insert, update, delete on cierres_caja to finaquick_app;
+grant update (nombre, telefono, foto_url, firma_url, sello_url, bio, password_hash, totp_secret, totp_secret_pendiente, totp_habilitado, sesion_valida_desde, debe_cambiar_password) on profiles to finaquick_app;
+grant select on cierres_caja to finaquick_respaldo;

@@ -79,6 +79,6 @@ export const enviarRequisicion = modo.enviarRequisicion;
 export const obtenerCierreCaja = modo.obtenerCierreCaja;
 export const conciliarCierreCaja = modo.conciliarCierreCaja;
 export const aprobarCierreConDiferencia = modo.aprobarCierreConDiferencia;
-export const marcarCierreEnviado = modo.marcarCierreEnviado;
+export const enviarCorteCaja = modo.enviarCorteCaja;
 
 export * from "./types";
