@@ -132,7 +132,13 @@ else
         psql -v ON_ERROR_STOP=1 -d finaquick_local -f servidor/esquema_local.sql >/tmp/finaquick_esquema.log 2>&1 ||
           detener "No se pudo aplicar el esquema — el detalle está en /tmp/finaquick_esquema.log."
       else
-        echo "Se deja tal cual — no se toca su contenido."
+        # Se conserva su contenido, pero una base de una versión anterior
+        # no tiene las columnas y tablas nuevas (formato de la requisición,
+        # conciliación con Getnet): esta actualización solo AGREGA, se
+        # puede correr las veces que haga falta, y no borra nada.
+        echo "Se conserva su contenido — actualizando su estructura (no se borra nada)..."
+        psql -v ON_ERROR_STOP=1 -d finaquick_local -f servidor/actualizar_esquema_20260930.sql >/tmp/finaquick_esquema.log 2>&1 ||
+          detener "No se pudo actualizar la base existente — el detalle está en /tmp/finaquick_esquema.log."
       fi
     fi
     psql -d finaquick_local -c "select 1" -w >/dev/null 2>&1 ||
@@ -209,6 +215,8 @@ PORT=4000
 ORIGEN_PERMITIDO=http://localhost:5173,http://localhost:5183
 FRONTEND_URL=http://localhost:5173
 EOF
+    # Contiene contraseñas y la llave de sesión: solo para este usuario.
+    chmod 600 servidor/api/.env
     echo "servidor/api/.env generado con credenciales propias de esta instalación."
     echo "(Para conectar el login de Microsoft, edita ese archivo — ver LOCAL_SETUP.md)"
   fi

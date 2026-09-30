@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { Card } from "../../components/ui/Card";
 import { Input } from "../../components/ui/Input";
@@ -17,27 +17,28 @@ type Resultado = Ticket & { servicioNombre: string };
 export default function GlobalSearch() {
   const { org } = useOrg();
   const [q, setQ] = useState("");
-  const [resultados, setResultados] = useState<Resultado[]>([]);
+  const [respuesta, setRespuesta] = useState<{ clave: string; resultados: Resultado[]; error?: string } | null>(null);
   const [seleccionado, setSeleccionado] = useState<Resultado | null>(null);
-  const [buscando, setBuscando] = useState(false);
+  const clave = JSON.stringify([org?.id, q]);
+  const activa = !!org && !!q.trim();
+  const buscando = activa && respuesta?.clave !== clave;
+  const resultados = activa && respuesta?.clave === clave ? respuesta.resultados : [];
+  const error = respuesta?.clave === clave ? respuesta.error : undefined;
 
   useEffect(() => {
-    if (!org || !q.trim()) {
-      setResultados([]);
-      setBuscando(false);
-      return;
-    }
-    setBuscando(true);
+    if (!org || !q.trim()) return;
+    let cancelado = false;
     const id = setTimeout(() => {
       db.buscarFolioGlobal(org.id, q).then((r) => {
-        setResultados(r);
-        setBuscando(false);
+        if (!cancelado) setRespuesta({ clave, resultados: r });
+      }).catch((err) => {
+        if (!cancelado) setRespuesta({ clave, resultados: [], error: err instanceof Error ? err.message : "No se pudo completar la búsqueda." });
       });
     }, 200);
-    return () => clearTimeout(id);
-  }, [org, q]);
+    return () => { cancelado = true; clearTimeout(id); };
+  }, [org, q, clave]);
 
-  const total = useMemo(() => resultados.reduce((s, t) => s + t.total, 0), [resultados]);
+  const total = resultados.reduce((s, t) => s + t.total, 0);
 
   return (
     <div>
@@ -54,7 +55,7 @@ export default function GlobalSearch() {
 
       {!q.trim() ? (
         <EmptyState icon={<Search size={24} strokeWidth={1.75} />} title="Busca un folio" hint="Escribe un nombre, un ID o un número de folio — se busca en todos los servicios de tu organización a la vez." />
-      ) : buscando ? null : resultados.length === 0 ? (
+      ) : buscando ? <p role="status">Buscando…</p> : error ? <p role="alert">{error}</p> : resultados.length === 0 ? (
         <EmptyState title="Sin resultados" hint={`No encontramos nada para "${q}".`} />
       ) : (
         <>

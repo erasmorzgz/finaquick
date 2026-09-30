@@ -9,7 +9,8 @@ import { Field, Input } from "../../components/ui/Input";
 import { Button } from "../../components/ui/Button";
 import { Modal } from "../../components/ui/Modal";
 import { Avatar, EmptyState } from "../../components/ui/Misc";
-import { ServiceIcon, ICON_REGISTRY } from "../../components/ui/ServiceIcon";
+import { ServiceIcon } from "../../components/ui/ServiceIcon";
+import { ICON_REGISTRY } from "../../components/ui/serviceIcons";
 import * as db from "../../lib/db";
 import type { CategoriaServicio, EventoAuditoria, Invitacion, Procedimiento, Role, ServiceConfig, UserProfile } from "../../lib/db/types";
 import { formatoMXN } from "../../lib/utils";
@@ -91,11 +92,17 @@ const COLORES_SUGERIDOS = [
 ];
 
 function MarcaTab() {
+  const { org } = useOrg();
+  return <MarcaTabContent key={JSON.stringify([org?.id, org?.nombre, org?.colorPrimario, org?.encabezadoDocumentos])} />;
+}
+
+function MarcaTabContent() {
   const { org, orgs, refresh, eliminarOrganizacion } = useOrg();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [nombre, setNombre] = useState(org?.nombre ?? "");
   const [color, setColor] = useState(org?.colorPrimario ?? "#e87722");
+  const [encabezado, setEncabezado] = useState(org?.encabezadoDocumentos ?? "");
   const [guardado, setGuardado] = useState(false);
   const avisar = useAvisos();
   const [guardando, setGuardando] = useState(false);
@@ -106,8 +113,6 @@ function MarcaTab() {
 
   useEffect(() => {
     if (org) {
-      setNombre(org.nombre);
-      setColor(org.colorPrimario);
       db.listarServicios(org.id).then(setServicios);
     }
   }, [org]);
@@ -139,7 +144,7 @@ function MarcaTab() {
       // PATCH /organizaciones/:id ya deja su propio evento en la
       // bitácora, en la misma transacción, solo si nombre/color de
       // verdad cambiaron — ver rutas.ts.
-      await db.actualizarOrganizacion(org.id, { nombre, colorPrimario: color });
+      await db.actualizarOrganizacion(org.id, { nombre, colorPrimario: color, encabezadoDocumentos: encabezado });
       await refresh();
       avisar({ status: "success", title: "Cambios guardados", description: "El nombre y el color de la organización ya se actualizaron." });
       setGuardado(true);
@@ -163,6 +168,17 @@ function MarcaTab() {
           </p>
           <Field label="Nombre de la organización">
             <Input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej. Universidad Anáhuac Veracruz" />
+          </Field>
+
+          <Field label="Encabezado de los documentos" hint="Razón social, domicilio, RFC… Sale arriba en las requisiciones impresas. Una línea por renglón; opcional.">
+            <textarea
+              value={encabezado}
+              onChange={(e) => setEncabezado(e.target.value)}
+              rows={3}
+              maxLength={600}
+              placeholder={"Razón social\nDomicilio\nRFC"}
+              className="glow-focus w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 text-sm outline-none"
+            />
           </Field>
 
           <SectionLabel className="mt-2">Color de marca</SectionLabel>
@@ -264,7 +280,12 @@ function ServiciosTab() {
     if (org) setServicios(await db.listarServicios(org.id));
   }
   useEffect(() => {
-    cargar();
+    if (!org) return;
+    let vigente = true;
+    db.listarServicios(org.id)
+      .then((lista) => { if (vigente) setServicios(lista); })
+      .catch((err) => { if (vigente) setError(err instanceof Error ? err.message : "No se pudieron cargar los servicios."); });
+    return () => { vigente = false; };
   }, [org]);
 
   async function actualizar(id: string, cambios: Partial<ServiceConfig>) {
@@ -328,6 +349,9 @@ function ServiciosTab() {
             {Object.entries(ICON_REGISTRY).map(([key]) => (
               <button
                 key={key}
+                type="button"
+                aria-label={`Ícono ${key}`}
+                aria-pressed={iconoNuevo === key}
                 onClick={() => setIconoNuevo(key)}
                 className={clsx(
                   "flex h-9 w-9 items-center justify-center rounded-lg border transition-colors",
@@ -384,6 +408,9 @@ function ServiciosTab() {
               {Object.entries(ICON_REGISTRY).map(([key]) => (
                 <button
                   key={key}
+                  type="button"
+                  aria-label={`Ícono ${key}`}
+                  aria-pressed={s.icono === key}
                   onClick={() => actualizar(s.id, { icono: key })}
                   className={clsx(
                     "flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
@@ -416,9 +443,14 @@ function ServiciosTab() {
             </div>
 
             {s.features.cierreCaja && (
-              <Field label="Nombre del cierre de caja para este servicio" hint='Ej. "Cierre de caja", "Corte diario", "Cierre de turno"…'>
-                <Input defaultValue={s.cierreCajaLabel} onBlur={(e) => actualizar(s.id, { cierreCajaLabel: e.target.value })} className="max-w-xs" />
-              </Field>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Nombre del cierre de caja para este servicio" hint='Ej. "Cierre de caja", "Corte diario", "Cierre de turno"…'>
+                  <Input defaultValue={s.cierreCajaLabel} onBlur={(e) => actualizar(s.id, { cierreCajaLabel: e.target.value })} />
+                </Field>
+                <Field label="Referencia de Getnet" hint="Ej. 566029. Sirve para comparar el corte con el reporte diario de Getnet; déjala vacía si este servicio no cobra con terminal.">
+                  <Input defaultValue={s.referenciaGetnet ?? ""} maxLength={30} inputMode="text" onBlur={(e) => actualizar(s.id, { referenciaGetnet: e.target.value.trim() })} />
+                </Field>
+              </div>
             )}
           </CardBody>
         </Card>
@@ -467,7 +499,14 @@ function CatalogoTab() {
     setCats(await db.listarCategorias(id));
   }
   useEffect(() => {
-    if (servicioId) cargar(servicioId);
+    if (!servicioId) return;
+    let activo = true;
+    Promise.all([db.listarProcedimientos(servicioId), db.listarCategorias(servicioId)]).then(([procedimientos, categorias]) => {
+      if (!activo) return;
+      setProcs(procedimientos);
+      setCats(categorias);
+    }).catch((err) => { if (activo) setError(err instanceof Error ? err.message : "No se pudo cargar el catálogo."); });
+    return () => { activo = false; };
   }, [servicioId]);
 
   async function guardar() {
@@ -1081,14 +1120,17 @@ const EVENTOS_POR_TANDA = 50;
 
 function AuditoriaTab() {
   const { org } = useOrg();
+  return <AuditoriaTabContent key={org?.id} />;
+}
+
+function AuditoriaTabContent() {
+  const { org } = useOrg();
   const [eventos, setEventos] = useState<EventoAuditoria[]>([]);
   const [cargandoMas, setCargandoMas] = useState(false);
   const [hayMas, setHayMas] = useState(false);
 
   useEffect(() => {
     if (!org) return;
-    setEventos([]);
-    setHayMas(false);
     db.listarEventos(org.id, { limit: EVENTOS_POR_TANDA }).then((primeraTanda) => {
       setEventos(primeraTanda);
       setHayMas(primeraTanda.length === EVENTOS_POR_TANDA);
@@ -1107,7 +1149,8 @@ function AuditoriaTab() {
     try {
       const siguienteTanda = await db.listarEventos(org.id, {
         limit: EVENTOS_POR_TANDA,
-        antesDe: eventos[eventos.length - 1].fecha,
+        antesDe: eventos[eventos.length - 1].cursorFecha ?? eventos[eventos.length - 1].fecha,
+        antesId: eventos[eventos.length - 1].id,
       });
       setEventos((prev) => [...prev, ...siguienteTanda]);
       setHayMas(siguienteTanda.length === EVENTOS_POR_TANDA);

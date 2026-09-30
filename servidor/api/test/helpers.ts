@@ -1,3 +1,5 @@
+import { crearEsquemaPruebas, urlDePruebas } from "../scripts/esquema-pruebas.js";
+let esquemaPrueba: ReturnType<typeof crearEsquemaPruebas> | undefined;
 // Infraestructura compartida por toda la suite de pruebas: prepara una
 // base de datos real desde cero (el mismo esquema que se usa en
 // producción, no una versión simplificada), arranca el servidor real
@@ -116,7 +118,7 @@ async function psql(args: string[]): Promise<string> {
   // solo espacio en blanco que un .trim() pudiera quitar — encontrado
   // corriendo la suite por primera vez.
   const ruta = await encontrarHerramienta("psql");
-  const { stdout } = await execFileAsync(ruta, ["-q", ...args], { env: await resolverEntornoPostgres() });
+  const { stdout } = await execFileAsync(ruta, ["-v", "ON_ERROR_STOP=1", "-q", ...args], { env: await resolverEntornoPostgres() });
   return stdout;
 }
 
@@ -127,12 +129,16 @@ export async function prepararBaseDeDatos(): Promise<void> {
   const env = await resolverEntornoPostgres();
   await execFileAsync(await encontrarHerramienta("dropdb"), ["--if-exists", DB_PRUEBA], { env });
   await execFileAsync(await encontrarHerramienta("createdb"), [DB_PRUEBA], { env });
-  await psql(["-d", DB_PRUEBA, "-f", ESQUEMA]);
-  await psql(["-d", DB_PRUEBA, "-c", `alter role finaquick_app password '${CONTRASENA_APP}';`]);
+  esquemaPrueba = crearEsquemaPruebas(ESQUEMA, "suite");
+  try {
+    await psql(["-d", DB_PRUEBA, "-f", esquemaPrueba.ruta]);
+    await psql(["-d", DB_PRUEBA, "-c", `alter role ${esquemaPrueba.rolApp} password '${CONTRASENA_APP}';`]);
+  } finally { esquemaPrueba.limpiar(); }
 }
 
 export async function borrarBaseDeDatos(): Promise<void> {
-  await execFileAsync(await encontrarHerramienta("dropdb"), ["--if-exists", DB_PRUEBA], { env: await resolverEntornoPostgres() }).catch(() => {});
+  await execFileAsync(await encontrarHerramienta("dropdb"), ["--if-exists", "--force", DB_PRUEBA], { env: await resolverEntornoPostgres() });
+  if (esquemaPrueba) await psql(["-d", "postgres", "-c", `drop role if exists ${esquemaPrueba.rolApp}, ${esquemaPrueba.rolRespaldo}`]);
 }
 
 /** Corre una consulta directo contra la base de pruebas, como
@@ -172,6 +178,8 @@ let procesoServidor: ChildProcess | null = null;
  * la base de datos de pruebas, y espera a que /api/salud conteste bien
  * antes de seguir. */
 export async function iniciarServidor(): Promise<void> {
+  if (!esquemaPrueba) throw new Error("Primero prepara la base de pruebas.");
+  const conexion = urlDePruebas(await resolverEntornoPostgres(), esquemaPrueba.rolApp, CONTRASENA_APP, DB_PRUEBA);
   // node + la ruta real de tsx, no "npx tsx" — en Windows, spawn() sin
   // shell no resuelve "npx" (es un .cmd, no un .exe; solo cmd.exe lo
   // encuentra) y truena con "spawn npx ENOENT". require.resolve
@@ -181,8 +189,10 @@ export async function iniciarServidor(): Promise<void> {
     cwd: RAIZ_API,
     env: {
       ...process.env,
-      DATABASE_URL: `postgresql://finaquick_app:${CONTRASENA_APP}@localhost:5432/${DB_PRUEBA}`,
-      DATABASE_URL_RESPALDO: `postgresql://finaquick_app:${CONTRASENA_APP}@localhost:5432/${DB_PRUEBA}`,
+      GEMINI_API_KEY: "", MICROSOFT_CLIENT_ID: "", MICROSOFT_CLIENT_SECRET: "",
+      MICROSOFT_TENANT_ID: "", MICROSOFT_REDIRECT_URI: "", MICROSOFT_CORREO_ENVIO: "", COOKIE_SECURE: "",
+      DATABASE_URL: conexion,
+      DATABASE_URL_RESPALDO: conexion,
       JWT_SECRET: JWT_SECRET_PRUEBA,
       PORT: String(PUERTO_PRUEBA),
       ORIGEN_PERMITIDO: "http://localhost:5173",

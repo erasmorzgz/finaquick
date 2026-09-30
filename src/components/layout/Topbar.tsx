@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from "react";
+import { useAvisos } from "../../lib/avisos/AvisosContext";
+import { useState, useRef, useEffect, lazy, Suspense } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, LogOut, UserRound, ShieldCheck, Settings, CircleHelp, Sparkles } from "lucide-react";
@@ -10,7 +11,7 @@ import { ServiceIcon } from "../ui/ServiceIcon";
 import { RoleSwitch } from "./RoleSwitch";
 import { OrgSwitcherList } from "./OrgSwitcherList";
 import { NotificationsBell } from "./NotificationsBell";
-import { SmartSearchModal } from "./SmartSearchModal";
+const SmartSearchModal = lazy(() => import("./SmartSearchModal").then((module) => ({ default: module.SmartSearchModal })));
 
 const ROLE_LABEL: Record<string, string> = {
   admin: "Administrador",
@@ -19,6 +20,7 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 export function Topbar({ title, subtitle }: { title: string; subtitle?: ReactNode }) {
+  const avisar = useAvisos();
   const { user, logout, viewAsPersonal } = useAuth();
   const { servicioActual } = useService();
   const { orgs } = useOrg();
@@ -133,7 +135,7 @@ export function Topbar({ title, subtitle }: { title: string; subtitle?: ReactNod
               </button>
               <div className="my-1 border-t border-[var(--color-border)]" />
               <button
-                onClick={logout}
+                onClick={() => { void logout().catch(() => avisar({ title: "No se pudo cerrar sesión", description: "Comprueba la conexión e inténtalo de nuevo.", status: "error" })); }}
                 className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10"
               >
                 <LogOut size={16} /> Cerrar sesión
@@ -143,7 +145,7 @@ export function Topbar({ title, subtitle }: { title: string; subtitle?: ReactNod
         </div>
       </div>
 
-      <SmartSearchModal open={buscarAbierto} onClose={() => setBuscarAbierto(false)} />
+      <Suspense fallback={null}><SmartSearchModal open={buscarAbierto} onClose={() => setBuscarAbierto(false)} /></Suspense>
     </header>
   );
 }

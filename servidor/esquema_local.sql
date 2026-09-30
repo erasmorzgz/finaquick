@@ -127,6 +127,9 @@ create table organizations (
   nombre text not null,
   color_primario text not null default '#3a3a3a',
   logo_url text,
+  -- Líneas de encabezado que se imprimen en los documentos (razón
+  -- social, domicilio, RFC…). Opcional.
+  encabezado_documentos text,
   created_at timestamptz not null default now()
 );
 alter table organizations enable row level security;
@@ -152,6 +155,10 @@ create table profiles (
   -- firma con un clic (ver requisiciones.firma_resolucion más abajo)
   -- en vez de tener que dibujarla cada vez.
   firma_url text,
+  -- Sello de la persona (imagen subida una vez desde Mi perfil, mismo
+  -- formato y límite que firma_url): se estampa en una requisición junto
+  -- con la firma, si quien la hace o la resuelve así lo decide.
+  sello_url text,
   bio text,
   rol text not null default 'personal' check (rol in ('admin', 'finanzas', 'personal')),
   creado_en timestamptz not null default now(),
@@ -246,7 +253,11 @@ create table services (
   campo_categoria_label text not null default 'Categoría',
   cierre_caja_label text not null default 'Cierre de caja',
   features jsonb not null default '{"creditos":true,"cierreCaja":true,"requisiciones":true,"requiereId":true,"esDerechoClinica":false}'::jsonb,
-  activo boolean not null default true
+  activo boolean not null default true,
+  -- Referencia/afiliación del terminal Getnet de este servicio (por
+  -- ejemplo, la de odontología): sirve para tomar solo sus movimientos
+  -- del reporte diario al conciliar el corte de caja. Opcional.
+  referencia_getnet text
 );
 alter table services enable row level security;
 create policy "ver servicios de tu organización" on services
@@ -448,6 +459,23 @@ create table requisiciones (
   motivo_rechazo text,
   creado_en timestamptz not null default now(),
   resuelto_en timestamptz,
+  -- Formato completo de la requisición de compra: departamento, motivo
+  -- y la lista de artículos [{cantidad, articulo, marca, url, imagen}].
+  -- concepto y cantidad siguen guardando un resumen (el primer artículo
+  -- y el total de piezas) para lo que ya los lee.
+  departamento text,
+  motivo text,
+  articulos jsonb not null default '[]'::jsonb,
+  -- A quién se le envió para su revisión (administrador o finanzas con
+  -- acceso al servicio). Además de un administrador, esa persona puede
+  -- aprobarla o rechazarla.
+  destinatario_id uuid references profiles(id) on delete set null,
+  enviada_en timestamptz,
+  -- Copias (no enlaces vivos, mismo criterio que firma_resolucion) de la
+  -- firma y el sello de quien la solicita y de quien la resuelve.
+  firma_solicitante text,
+  sello_solicitante text,
+  sello_resolucion text,
   unique (service_id, folio)
 );
 alter table requisiciones enable row level security;
@@ -466,8 +494,64 @@ create policy "crear requisiciones con acceso de escritura al servicio" on requi
 -- Solo un administrador resuelve (aprueba/rechaza) — a diferencia de
 -- crear una, que cualquiera con acceso de escritura al servicio puede
 -- hacer.
-create policy "admin resuelve requisiciones de su organización" on requisiciones
-  for update using (es_admin() and puede_acceder_servicio(service_id));
+create policy "admin o destinatario resuelve requisiciones de su organización" on requisiciones
+  for update using (
+    puede_acceder_servicio(service_id)
+    and (es_admin() or destinatario_id = usuario_actual() or solicitado_por = usuario_actual())
+  );
+
+-- ============================================================
+-- Cierres de caja conciliados con el reporte diario de Getnet
+-- ============================================================
+-- Una fila por servicio y día. Guarda el resultado de comparar los
+-- cobros con tarjeta del sistema contra el reporte de Getnet (el
+-- archivo en sí NO se guarda — solo su nombre, su huella y los montos y
+-- autorizaciones comparados, sin números de tarjeta).
+create table cierres_caja (
+  id uuid primary key default gen_random_uuid(),
+  service_id uuid not null references services(id) on delete cascade,
+  fecha date not null,
+  referencia text,
+  archivo_nombre text,
+  archivo_hash text,
+  total_sistema numeric(12,2) not null,
+  total_getnet numeric(12,2) not null,
+  diferencia numeric(12,2) not null,
+  movimientos_sistema integer not null default 0,
+  movimientos_getnet integer not null default 0,
+  detalle jsonb not null default '{}'::jsonb,
+  -- aprobado: coincide todo. no_aprobado: hay diferencias.
+  -- aprobado_con_diferencia: un administrador lo autorizó pese a ellas
+  -- (con una observación obligatoria).
+  estado text not null check (estado in ('aprobado', 'no_aprobado', 'aprobado_con_diferencia')),
+  observacion text,
+  aprobado_por uuid references profiles(id) on delete set null,
+  creado_por uuid references profiles(id) on delete set null,
+  creado_en timestamptz not null default now(),
+  actualizado_en timestamptz not null default now(),
+  enviado_en timestamptz,
+  unique (service_id, fecha)
+);
+alter table cierres_caja enable row level security;
+create policy "ver cierres de servicios a los que tienes acceso" on cierres_caja
+  for select using (puede_acceder_servicio(service_id));
+create policy "conciliar cierres con acceso completo al servicio" on cierres_caja
+  for insert with check (
+    creado_por = usuario_actual()
+    and (
+      es_admin() or exists (
+        select 1 from service_access
+        where service_id = cierres_caja.service_id and user_id = usuario_actual() and solo_consulta = false
+      )
+    )
+  );
+create policy "actualizar cierres con acceso completo al servicio" on cierres_caja
+  for update using (
+    es_admin() or exists (
+      select 1 from service_access
+      where service_id = cierres_caja.service_id and user_id = usuario_actual() and solo_consulta = false
+    )
+  );
 
 -- ============================================================
 -- Invitaciones
@@ -584,6 +668,7 @@ alter table categorias force row level security;
 alter table procedimientos force row level security;
 alter table tickets force row level security;
 alter table requisiciones force row level security;
+alter table cierres_caja force row level security;
 alter table invitaciones force row level security;
 alter table eventos_auditoria force row level security;
 alter table archivos_enviados force row level security;
@@ -1062,7 +1147,7 @@ grant usage on schema public to finaquick_app;
 
 grant select, insert, update, delete on
   organizations, org_members, services, service_access, categorias,
-  procedimientos, tickets, requisiciones, invitaciones, eventos_auditoria, archivos_enviados
+  procedimientos, tickets, requisiciones, cierres_caja, invitaciones, eventos_auditoria, archivos_enviados
 to finaquick_app;
 
 -- contadores no necesita RLS ni políticas (no guarda datos de ningún
@@ -1079,7 +1164,7 @@ grant select, insert, update on contadores to finaquick_app;
 -- limita esa fila a "la tuya o eres admin" — no hace falta una función
 -- aparte para eso.
 grant select on profiles to finaquick_app;
-grant update (nombre, telefono, foto_url, firma_url, bio, password_hash, totp_secret, totp_secret_pendiente, totp_habilitado, sesion_valida_desde, debe_cambiar_password) on profiles to finaquick_app;
+grant update (nombre, telefono, foto_url, firma_url, sello_url, bio, password_hash, totp_secret, totp_secret_pendiente, totp_habilitado, sesion_valida_desde, debe_cambiar_password) on profiles to finaquick_app;
 
 -- Por default, PostgreSQL deja que CUALQUIER rol que pueda conectarse
 -- a esta base de datos ejecute una función recién creada (privilegio
@@ -1175,6 +1260,41 @@ $$;
 
 grant usage on schema public to finaquick_respaldo;
 grant select on all tables in schema public to finaquick_respaldo;
+
+-- ¿Puede esta persona recibir una requisición de este servicio para
+-- revisarla? Un administrador (su rol es de toda la instalación); finanzas solo si tiene acceso
+-- completo al servicio y sigue en la organización. Es SECURITY DEFINER
+-- porque quien envía (personal) no puede leer el acceso de otra persona.
+create or replace function es_destinatario_valido(p_user_id uuid, p_service_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+begin
+  if not puede_acceder_servicio(p_service_id) then
+    return false;
+  end if;
+  return exists (
+    select 1 from profiles p
+    where p.id = p_user_id
+      and (
+        p.rol = 'admin'
+        or (p.rol = 'finanzas' and exists (
+          select 1
+          from service_access sa
+          join services s on s.id = sa.service_id
+          join org_members om on om.org_id = s.org_id and om.user_id = sa.user_id
+          where sa.service_id = p_service_id and sa.user_id = p.id and sa.solo_consulta = false
+        ))
+      )
+  );
+end;
+$$;
+revoke execute on function es_destinatario_valido(uuid, uuid) from public;
+grant execute on function es_destinatario_valido(uuid, uuid) to finaquick_app;
+
 -- Para que tablas que se agreguen después también queden cubiertas
 -- sin tener que acordarse de repetir el grant de arriba.
 alter default privileges in schema public grant select on tables to finaquick_respaldo;

@@ -15,14 +15,10 @@ import { Button } from "../../components/ui/Button";
 // Profile.tsx); o Microsoft/el servidor mandaron ?error=... y lo
 // mostramos aquí.
 export default function MicrosoftCompletado() {
-  const [error, setError] = useState<string | null>(null);
+  const [error] = useState(() => new URLSearchParams(window.location.search).get("error"));
 
   useEffect(() => {
-    const err = new URLSearchParams(window.location.search).get("error");
-    if (err) {
-      setError(err);
-      return;
-    }
+    if (error) return;
     // tokenPre/reauth2fa viajan en el fragmento (#), no en la URL
     // normal — el navegador nunca los manda a ningún servidor, así que
     // solo se leen aquí mismo, del lado del cliente.
@@ -32,13 +28,18 @@ export default function MicrosoftCompletado() {
       window.location.href = `/login#tokenPre=${encodeURIComponent(tokenPre)}`;
       return;
     }
+    const desactivar = fragmento.get("reauth2faDesactivar");
+    if (desactivar) {
+      window.location.href = `/app/perfil#reauth2faDesactivar=${encodeURIComponent(desactivar)}`;
+      return;
+    }
     const reauth2fa = fragmento.get("reauth2fa");
     if (reauth2fa) {
       window.location.href = `/app/perfil#reauth2fa=${encodeURIComponent(reauth2fa)}`;
       return;
     }
     window.location.href = "/";
-  }, []);
+  }, [error]);
 
   return (
     <AuthLayout>

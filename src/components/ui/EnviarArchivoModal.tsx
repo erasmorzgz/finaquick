@@ -24,6 +24,7 @@ export function EnviarArchivoModal({
   servicioNombre,
   nombreArchivo,
   contenido,
+  onEnviado,
 }: {
   open: boolean;
   onClose: () => void;
@@ -34,6 +35,8 @@ export function EnviarArchivoModal({
   servicioNombre?: string;
   nombreArchivo: string;
   contenido: string;
+  /** Se llama una vez que el archivo ya se envió. */
+  onEnviado?: () => void;
 }) {
   const { user } = useAuth();
   const { org } = useOrg();
@@ -74,6 +77,7 @@ export function EnviarArchivoModal({
         mensaje: mensaje.trim() || undefined,
       });
       setEnviado(true);
+      onEnviado?.();
       setTimeout(onClose, 1200);
     } catch (err) {
       // Sin este catch, el botón se quedaba diciendo "Enviando…" para

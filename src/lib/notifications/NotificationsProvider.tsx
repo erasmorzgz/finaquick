@@ -1,17 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { NotificationsContext } from "./NotificationsContext";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import * as db from "../db";
 import type { ArchivoEnviado } from "../db/types";
 import { useAuth } from "../auth/AuthContext";
-
-interface NotificationsState {
-  archivos: ArchivoEnviado[];
-  noLeidos: number;
-  refresh: () => Promise<void>;
-  marcarLeido: (id: string) => Promise<void>;
-}
-
-const NotificationsContext = createContext<NotificationsState | null>(null);
 
 // Los archivos se guardan de verdad en el servidor — lo que no existe
 // todavía es una notificación push real avisando al instante cuando
@@ -22,6 +14,11 @@ const NotificationsContext = createContext<NotificationsState | null>(null);
 const INTERVALO_MS = 12_000;
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  return <NotificationsSession key={(user?.id ?? "sin-sesion")}>{children}</NotificationsSession>;
+}
+
+function NotificationsSession({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [archivos, setArchivos] = useState<ArchivoEnviado[]>([]);
 
@@ -42,8 +39,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (!user) return;
+    let activo = true;
+    db.listarArchivosRecibidos(user.id).then((lista) => { if (activo) setArchivos(lista); }).catch(() => {});
+    return () => { activo = false; };
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -67,10 +67,4 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       {children}
     </NotificationsContext.Provider>
   );
-}
-
-export function useNotifications() {
-  const ctx = useContext(NotificationsContext);
-  if (!ctx) throw new Error("useNotifications debe usarse dentro de <NotificationsProvider>");
-  return ctx;
 }

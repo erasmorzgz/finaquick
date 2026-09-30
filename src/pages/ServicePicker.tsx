@@ -1,3 +1,4 @@
+import { useAvisos } from "../lib/avisos/AvisosContext";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { LogOut, Building2, ChevronDown, Sparkles, Settings, Lock } from "lucide-react";
@@ -12,6 +13,7 @@ import { ServiceIcon } from "../components/ui/ServiceIcon";
 import { OrgSwitcherList } from "../components/layout/OrgSwitcherList";
 
 export default function ServicePicker() {
+  const avisar = useAvisos();
   const { user, logout } = useAuth();
   const { servicios, elegirServicio, cargando } = useService();
   const { org, orgs } = useOrg();
@@ -85,7 +87,7 @@ export default function ServicePicker() {
             <p className="text-sm font-bold leading-tight text-[var(--color-text-primary)]">{user.nombre}</p>
             <Badge tone="brand">{user.rol === "admin" ? "Administrador" : user.rol === "finanzas" ? "Finanzas" : "Personal"}</Badge>
           </div>
-          <button onClick={logout} title="Cerrar sesión" className="ml-1 rounded-full p-1.5 text-[var(--color-text-muted)] hover:bg-black/5 dark:hover:bg-white/10">
+          <button onClick={() => { void logout().catch(() => avisar({ title: "No se pudo cerrar sesión", description: "Comprueba la conexión e inténtalo de nuevo.", status: "error" })); }} title="Cerrar sesión" className="ml-1 rounded-full p-1.5 text-[var(--color-text-muted)] hover:bg-black/5 dark:hover:bg-white/10">
             <LogOut size={16} />
           </button>
         </div>

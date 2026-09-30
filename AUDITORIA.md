@@ -6,7 +6,7 @@ instituciones multi-organización. Este documento resume el alcance,
 la metodología y los resultados de la revisión; el detalle técnico
 completo de cada control está en [`SECURITY.md`](SECURITY.md).
 
-## Verificación de esta entrega (29 de septiembre de 2026)
+## Verificación de esta entrega (30 de septiembre de 2026)
 
 **Cómo se verificó.** El paquete se instaló desde cero con su propio
 instalador de macOS, sin intervención manual, usando un nombre de
@@ -15,11 +15,53 @@ con el código de invitación que imprimió el instalador, se cargaron los
 datos de ejemplo y se recorrieron las pantallas principales en un
 navegador: se creó un folio desde el formulario, se consultó a Quick y
 se imprimieron el cierre de caja y el reporte financiero. La suite de
-pruebas del servidor (154 pruebas, contra PostgreSQL real) y las 12
-del clasificador de Quick pasaron completas, y `npm audit --omit=dev` reportó cero alertas en el cliente y
-en el servidor.
+pruebas del servidor (242 pruebas, contra PostgreSQL real) y las del
+cliente (39: clasificador de Quick, lector del reporte de Getnet y
+recuperación de folios) pasaron completas; `npm run lint` no reporta
+avisos, y `npm audit --omit=dev` reportó cero alertas en el cliente y en
+el servidor. Las pantallas nuevas se recorrieron en un navegador
+(escritorio y teléfono) con dos cuentas distintas y se revisaron con el
+análisis automático de accesibilidad: cero violaciones.
 
-**Cambios de esta entrega:**
+**Funciones nuevas de esta entrega:**
+
+- Requisición de compra con el formato institucional (artículos con
+  marca, página de internet e imagen; motivo; firma y sello), envío a un
+  administrador o a finanzas, revisión y aprobación en la app, e
+  impresión / PDF.
+- Conciliación del corte de caja con el reporte diario de Getnet (Excel
+  o CSV), por referencia de servicio; el corte solo se envía si cuadra o
+  si un administrador lo aprueba con su motivo.
+- Actualización de una base ya instalada
+  (`servidor/actualizar_esquema_20260930.sql`), que el instalador aplica
+  solo cuando se conserva la base existente.
+
+**Correcciones incorporadas de una revisión externa** (una versión del
+proyecto revisada por separado, cuyos hallazgos se comprobaron uno a uno
+contra este código antes de adoptarlos):
+
+- Las pruebas y la prueba de carga cambiaban la contraseña del rol
+  `finaquick_app`, que pertenece a todo el servidor PostgreSQL: ahora
+  usan roles temporales propios y no tocan una instalación real.
+- Paginación de la bitácora con cursor por fecha completa (con
+  microsegundos) e identificador: con solo la fecha en milisegundos se
+  omitían eventos.
+- El comparativo financiero usa el mes calendario actual y el anterior,
+  no los dos últimos meses con cobros.
+- Recuperación de un folio cuya respuesta se perdió: se conserva la
+  referencia ante 401, 403, 408, 429 y errores de red, y una respuesta
+  incompleta ya no se toma por éxito.
+- El cierre de sesión informa si falla en lugar de mostrarse cerrado.
+- Respaldos que se escriben completos o no se escriben, con permisos
+  restringidos y nombre único.
+- Cuentas creadas solo con Microsoft: ahora también pueden desactivar
+  el segundo factor.
+- Las peticiones que escriben con un origen no autorizado se rechazan.
+- Se retiraron todos los avisos de lint (26 → 0), entre ellos varios
+  estados que se reiniciaban con efectos y respuestas tardías que
+  podían pisar datos más nuevos.
+
+**Otros cambios de esta entrega:**
 
 - Inicio de sesión: el límite de intentos por IP del segundo factor
   ahora es independiente del de la contraseña; antes, cada código de

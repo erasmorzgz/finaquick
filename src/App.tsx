@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { ServiceProvider, useService } from "./lib/service/ServiceContext";
+import { ServiceProvider } from "./lib/service/ServiceProvider";
+import { useService } from "./lib/service/ServiceContext";
 import { RequireAuth, RequireRole, RequireService, FullscreenSpinner } from "./lib/auth/Guards";
 import { useAuth } from "./lib/auth/AuthContext";
 import { AppShell } from "./components/layout/AppShell";

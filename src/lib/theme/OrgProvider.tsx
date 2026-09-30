@@ -1,27 +1,21 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { OrgContext } from "./OrgContext";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import * as db from "../db";
 import type { Organization } from "../db/types";
 import { aplicarColorMarca } from "./brand";
 import { useAuth } from "../auth/AuthContext";
 
-interface OrgState {
-  org: Organization | null;
-  orgs: Organization[];
-  cargando: boolean;
-  cambiarOrganizacion: (id: string) => Promise<void>;
-  crearOrganizacion: (nombre: string) => Promise<Organization>;
-  eliminarOrganizacion: (id: string) => Promise<void>;
-  refresh: () => Promise<void>;
+export function OrgProvider({ children }: { children: ReactNode }) {
+  const { user, loading: authLoading } = useAuth();
+  return <OrgSession key={(user?.id ?? "sin-sesion") + String(authLoading)}>{children}</OrgSession>;
 }
 
-const OrgContext = createContext<OrgState | null>(null);
-
-export function OrgProvider({ children }: { children: ReactNode }) {
+function OrgSession({ children }: { children: ReactNode }) {
   const { user, loading: authLoading } = useAuth();
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [org, setOrg] = useState<Organization | null>(null);
-  const [cargando, setCargando] = useState(true);
+  const [cargando, setCargando] = useState(!!user || authLoading);
 
   // Recarga la lista de organizaciones a las que pertenece la cuenta
   // activa y decide cuál es "la actual" (la última elegida en este
@@ -48,9 +42,20 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   useEffect(() => {
-    if (authLoading) return;
-    refresh().finally(() => setCargando(false));
-  }, [authLoading, refresh]);
+    if (authLoading || !user) return;
+    let activo = true;
+    Promise.all([db.listarOrganizaciones(user.id), db.obtenerOrgActualId()]).then(async ([lista, actualId]) => {
+      if (!activo) return;
+      const actual = lista.find((o) => o.id === actualId) ?? lista[0] ?? null;
+      setOrgs(lista);
+      setOrg(actual);
+      if (actual) {
+        aplicarColorMarca(actual.colorPrimario);
+        await db.establecerOrgActualId(actual.id);
+      }
+    }).catch(() => {}).finally(() => { if (activo) setCargando(false); });
+    return () => { activo = false; };
+  }, [authLoading, user]);
 
   const cambiarOrganizacion = useCallback(
     async (id: string) => {
@@ -92,10 +97,4 @@ export function OrgProvider({ children }: { children: ReactNode }) {
       {children}
     </OrgContext.Provider>
   );
-}
-
-export function useOrg() {
-  const ctx = useContext(OrgContext);
-  if (!ctx) throw new Error("useOrg debe usarse dentro de <OrgProvider>");
-  return ctx;
 }

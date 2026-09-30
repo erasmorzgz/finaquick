@@ -12,7 +12,8 @@
 // del límite (RESPALDOS_A_CONSERVAR) para no llenar el disco poco a
 // poco para siempre.
 import "dotenv/config";
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, renameSync, chmodSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
@@ -104,7 +105,7 @@ function nombreArchivo() {
   const parte = (n) => String(n).padStart(2, "0");
   const fecha = `${ahora.getFullYear()}-${parte(ahora.getMonth() + 1)}-${parte(ahora.getDate())}`;
   const hora = `${parte(ahora.getHours())}-${parte(ahora.getMinutes())}-${parte(ahora.getSeconds())}`;
-  return `finaquick_${fecha}_${hora}.sql`;
+  return `finaquick_${fecha}_${hora}_${randomBytes(6).toString("hex")}.sql`;
 }
 
 function borrarRespaldosViejos() {
@@ -146,17 +147,22 @@ async function main() {
     process.exit(1);
   }
 
-  if (!existsSync(CARPETA_RESPALDOS)) mkdirSync(CARPETA_RESPALDOS, { recursive: true });
+  if (!existsSync(CARPETA_RESPALDOS)) mkdirSync(CARPETA_RESPALDOS, { recursive: true, mode: 0o700 });
   const ruta = join(CARPETA_RESPALDOS, nombreArchivo());
+  const temporal = ruta + ".partial";
 
   try {
     // --clean: el archivo generado incluye "drop table/función..." antes
     // de cada "create", para que restaurarlo sobre una base ya usada
     // reemplace todo en vez de tronar por "ya existe".
-    await execFileAsync(pgDump, [process.env.DATABASE_URL_RESPALDO, "--clean", "--if-exists", "-f", ruta]);
+    await execFileAsync(pgDump, [process.env.DATABASE_URL_RESPALDO, "--clean", "--if-exists", "-f", temporal]);
+    if (statSync(temporal).size === 0) throw new Error("El respaldo está vacío.");
+    chmodSync(temporal, 0o600);
+    renameSync(temporal, ruta);
     registrar("INFO", `Respaldo creado: ${ruta}`);
     borrarRespaldosViejos();
   } catch (error) {
+    if (existsSync(temporal)) unlinkSync(temporal);
     registrar("ERROR", `No se pudo generar el respaldo: ${error.message}`);
     process.exit(1);
   }

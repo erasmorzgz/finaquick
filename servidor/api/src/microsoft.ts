@@ -54,19 +54,20 @@ const configurado = Boolean(
 // que la persona que completa el callback sea, de verdad, la misma
 // cuenta de Finaquick que iba a reautenticarse, no cualquier cuenta de
 // Microsoft del mismo tenant.
-function firmarState(nonce: string, intentoReautenticarId?: string): string {
-  return jwt.sign({ tipo: "oauth_microsoft", nonce, intentoReautenticarId }, secretoOAuthMicrosoft, { expiresIn: "10m" });
+function firmarState(nonce: string, intentoReautenticarId?: string, accion2fa?: "activar" | "desactivar"): string {
+  return jwt.sign({ tipo: "oauth_microsoft", nonce, intentoReautenticarId, accion2fa }, secretoOAuthMicrosoft, { expiresIn: "10m" });
 }
-function stateValido(state: string, nonceDeCookie: string | undefined): { intentoReautenticarId?: string } | null {
+function stateValido(state: string, nonceDeCookie: string | undefined): { intentoReautenticarId?: string; accion2fa?: "activar" | "desactivar" } | null {
   if (!nonceDeCookie) return null;
   try {
     const payload = jwt.verify(state, secretoOAuthMicrosoft, { algorithms: ["HS256"] }) as {
       tipo?: string;
       nonce?: string;
       intentoReautenticarId?: string;
+      accion2fa?: "activar" | "desactivar";
     };
     if (payload.tipo !== "oauth_microsoft" || payload.nonce !== nonceDeCookie) return null;
-    return { intentoReautenticarId: payload.intentoReautenticarId };
+    return { intentoReautenticarId: payload.intentoReautenticarId, accion2fa: payload.accion2fa };
   } catch {
     return null;
   }
@@ -89,7 +90,8 @@ microsoftRutas.get("/auth/microsoft/iniciar", (req: RequestConUsuario, res) => {
   // secreto 2FA nuevo — ver Profile.tsx y el callback más abajo. Sin
   // sesión, esto no tiene sentido: se rechaza aquí mismo, antes de
   // mandar a nadie a Microsoft.
-  const intentoReautenticar2fa = req.query.intent === "2fa";
+  const accion2fa = req.query.intent === "2fa_desactivar" ? "desactivar" : "activar";
+  const intentoReautenticar2fa = req.query.intent === "2fa" || req.query.intent === "2fa_desactivar";
   if (intentoReautenticar2fa && !req.usuarioId) {
     res.status(401).send("Necesitas haber iniciado sesión antes de reautenticarte con Microsoft.");
     return;
@@ -113,7 +115,7 @@ microsoftRutas.get("/auth/microsoft/iniciar", (req: RequestConUsuario, res) => {
     redirect_uri: MICROSOFT_REDIRECT_URI!,
     response_mode: "query",
     scope: "openid profile email User.Read",
-    state: firmarState(nonce, intentoReautenticar2fa ? req.usuarioId : undefined),
+    state: firmarState(nonce, intentoReautenticar2fa ? req.usuarioId : undefined, accion2fa),
     // "login": para el login normal, una sesión de Microsoft ya activa
     // en el navegador (SSO) es exactamente el punto — no tiene sentido
     // pedir credenciales otra vez solo para entrar a Finaquick. Pero
@@ -245,8 +247,9 @@ microsoftRutas.get("/auth/microsoft/callback", async (req, res) => {
       if (usuarioId !== intentoReautenticarId) {
         throw new Error("REAUTENTICACION_CUENTA_DISTINTA");
       }
-      const tokenReauth = firmarTokenAccion("2fa_reautenticado_microsoft", usuarioId, {}, "5m");
-      res.redirect(`${frontend}/microsoft/completado#reauth2fa=${encodeURIComponent(tokenReauth)}`);
+      const desactivar = estadoDecodificado.accion2fa === "desactivar";
+      const tokenReauth = firmarTokenAccion(desactivar ? "2fa_desactivar_microsoft" : "2fa_reautenticado_microsoft", usuarioId, { emitidoEnMs: Date.now() }, "5m");
+      res.redirect(`${frontend}/microsoft/completado#${desactivar ? "reauth2faDesactivar" : "reauth2fa"}=${encodeURIComponent(tokenReauth)}`);
       return;
     }
 

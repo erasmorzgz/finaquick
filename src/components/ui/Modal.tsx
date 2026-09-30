@@ -114,7 +114,7 @@ export function Modal({
       >
         {c.title && (
           <div className="px-6 pt-6 pb-4 border-b border-[var(--color-border)]">
-            <h3 id={tituloId} className="text-lg font-bold text-[var(--color-text-primary)]">{c.title}</h3>
+            <h2 id={tituloId} className="text-lg font-bold text-[var(--color-text-primary)]">{c.title}</h2>
             {c.subtitle && <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">{c.subtitle}</p>}
           </div>
         )}

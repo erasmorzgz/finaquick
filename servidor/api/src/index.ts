@@ -80,6 +80,14 @@ app.use(helmet());
 const origenesPermitidos = (process.env.ORIGEN_PERMITIDO ?? "http://localhost:5173")
   .split(",")
   .map((o) => o.trim());
+app.use((req, res, next) => {
+  const origen = req.get("Origin");
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && origen && !origenesPermitidos.includes(origen)) {
+    res.status(403).json({ error: "El origen de esta solicitud no está permitido." });
+    return;
+  }
+  next();
+});
 app.use(cors({ origin: origenesPermitidos, credentials: true }));
 
 // Tres límites de tamaño de cuerpo, no uno solo para toda la API: la
@@ -97,11 +105,17 @@ const cuerpoArchivo = express.json({ limit: "5mb" }); // los archivos viajan com
 const cuerpoImagen = express.json({ limit: "2.5mb" });
 const RUTA_USUARIO = /^\/api\/usuarios\/[^/]+$/;
 const RUTA_ORGANIZACION = /^\/api\/organizaciones\/[^/]+$/;
+// Una requisición puede traer hasta 30 imágenes de artículos ya reducidas
+// (ver LARGO_MAX_IMAGENES_TOTAL en rutas.ts), y el reporte de Getnet hasta
+// 5,000 movimientos: cuerpos más grandes que el normal, solo en esas rutas.
+const cuerpoConciliacion = express.json({ limit: "1mb" });
 const cuerpoNormal = express.json({ limit: "150kb" });
 app.use((req, res, next) => {
   let parser = cuerpoNormal;
   if (req.method === "POST" && req.path === "/api/archivos") parser = cuerpoArchivo;
   else if (req.method === "PATCH" && (RUTA_USUARIO.test(req.path) || RUTA_ORGANIZACION.test(req.path))) parser = cuerpoImagen;
+  else if (req.method === "POST" && req.path === "/api/requisiciones") parser = cuerpoImagen;
+  else if (req.method === "POST" && req.path === "/api/cierres-caja/conciliar") parser = cuerpoConciliacion;
   parser(req, res, next);
 });
 app.use(cookieParser());

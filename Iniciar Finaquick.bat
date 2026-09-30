@@ -144,7 +144,12 @@ if %errorlevel% neq 0 (
                 psql -v ON_ERROR_STOP=1 -d finaquick_local -f servidor\esquema_local.sql > "%TEMP%\finaquick_esquema.log" 2>&1
                 if !errorlevel! neq 0 goto :detener_esquema
             ) else (
-                echo Se deja tal cual - no se toca su contenido.
+                rem -- Se conserva su contenido, pero una base de una version anterior
+                rem -- no tiene las columnas y tablas nuevas. Esta actualizacion solo
+                rem -- agrega, se puede repetir y no borra nada.
+                echo Se conserva su contenido - actualizando su estructura ^(no se borra nada^)...
+                psql -v ON_ERROR_STOP=1 -d finaquick_local -f servidor\actualizar_esquema_20260930.sql > "%TEMP%\finaquick_esquema.log" 2>&1
+                if !errorlevel! neq 0 goto :detener_esquema
             )
         )
         psql -d finaquick_local -c "select 1" -w >nul 2>nul

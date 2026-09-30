@@ -1,3 +1,5 @@
+import { crearEsquemaPruebas, urlDePruebas } from "./esquema-pruebas.js";
+let esquemaPrueba: ReturnType<typeof crearEsquemaPruebas> | undefined;
 // Prueba de carga: simula varios usuarios reales usando el sistema al
 // mismo tiempo, contra el servidor y la base de datos reales (mismo
 // esquema, mismas políticas de seguridad por fila) — no un mock, no
@@ -142,7 +144,7 @@ async function resolverEntornoPostgres(): Promise<NodeJS.ProcessEnv> {
 
 async function psql(args: string[]): Promise<string> {
   const ruta = await encontrarHerramienta("psql");
-  const { stdout } = await execFileAsync(ruta, ["-q", ...args], { env: await resolverEntornoPostgres() });
+  const { stdout } = await execFileAsync(ruta, ["-v", "ON_ERROR_STOP=1", "-q", ...args], { env: await resolverEntornoPostgres() });
   return stdout;
 }
 
@@ -150,12 +152,16 @@ async function prepararBaseDeDatos(): Promise<void> {
   const env = await resolverEntornoPostgres();
   await execFileAsync(await encontrarHerramienta("dropdb"), ["--if-exists", DB_CARGA], { env });
   await execFileAsync(await encontrarHerramienta("createdb"), [DB_CARGA], { env });
-  await psql(["-d", DB_CARGA, "-f", "../esquema_local.sql"]);
-  await psql(["-d", DB_CARGA, "-c", `alter role finaquick_app password '${CONTRASENA_APP}';`]);
+  esquemaPrueba = crearEsquemaPruebas("../esquema_local.sql", "carga");
+  try {
+    await psql(["-d", DB_CARGA, "-f", esquemaPrueba.ruta]);
+    await psql(["-d", DB_CARGA, "-c", `alter role ${esquemaPrueba.rolApp} password '${CONTRASENA_APP}';`]);
+  } finally { esquemaPrueba.limpiar(); }
 }
 
 async function borrarBaseDeDatos(): Promise<void> {
-  await execFileAsync(await encontrarHerramienta("dropdb"), ["--if-exists", DB_CARGA], { env: await resolverEntornoPostgres() }).catch(() => {});
+  await execFileAsync(await encontrarHerramienta("dropdb"), ["--if-exists", "--force", DB_CARGA], { env: await resolverEntornoPostgres() });
+  if (esquemaPrueba) await psql(["-d", "postgres", "-c", `drop role if exists ${esquemaPrueba.rolApp}, ${esquemaPrueba.rolRespaldo}`]);
 }
 
 async function consultar(sql: string): Promise<string> {
@@ -165,6 +171,8 @@ async function consultar(sql: string): Promise<string> {
 let procesoServidor: ChildProcess | null = null;
 
 async function iniciarServidor(): Promise<void> {
+  if (!esquemaPrueba) throw new Error("Primero prepara la base de pruebas.");
+  const conexion = urlDePruebas(await resolverEntornoPostgres(), esquemaPrueba.rolApp, CONTRASENA_APP, DB_CARGA);
   // node + la ruta real de tsx, no "npx tsx" — en Windows, spawn() sin
   // shell no resuelve "npx" (es un .cmd, no un .exe; Windows solo lo
   // encuentra pasando por cmd.exe) y truena con "spawn npx ENOENT".
@@ -175,8 +183,10 @@ async function iniciarServidor(): Promise<void> {
   procesoServidor = spawn(process.execPath, [require.resolve("tsx/cli"), "src/index.ts"], {
     env: {
       ...process.env,
-      DATABASE_URL: `postgresql://finaquick_app:${CONTRASENA_APP}@localhost:5432/${DB_CARGA}`,
-      DATABASE_URL_RESPALDO: `postgresql://finaquick_app:${CONTRASENA_APP}@localhost:5432/${DB_CARGA}`,
+      GEMINI_API_KEY: "", MICROSOFT_CLIENT_ID: "", MICROSOFT_CLIENT_SECRET: "",
+      MICROSOFT_TENANT_ID: "", MICROSOFT_REDIRECT_URI: "", MICROSOFT_CORREO_ENVIO: "", COOKIE_SECURE: "",
+      DATABASE_URL: conexion,
+      DATABASE_URL_RESPALDO: conexion,
       JWT_SECRET: "llave-de-prueba-de-carga-no-usar-en-produccion-nunca",
       PORT: String(PUERTO_CARGA),
       ORIGEN_PERMITIDO: "http://localhost:5173",

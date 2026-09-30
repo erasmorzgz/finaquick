@@ -45,27 +45,11 @@ function claveStorageDe(idempotencyKey: string): string {
   return PREFIJO_STORAGE_INTENTO + idempotencyKey;
 }
 
-// Cuándo el resultado de guardar un folio sigue siendo DESCONOCIDO
-// (hay que conservar el intento para reconciliarlo después) en vez de
-// DEFINITIVO (el servidor ya dijo que no con una respuesta real, y
-// repetir la misma petición no cambiaría esa respuesta):
-// - Un fetch que nunca llegó a completarse (red caída, servidor
-//   inalcanzable) rechaza con un TypeError, antes de que exista
-//   ninguna respuesta HTTP que leer — el resultado real es un misterio
-//   total.
-// - Un 5xx (500/502/503/504) SÍ es una respuesta HTTP, pero no una
-//   decisión real del servidor sobre esta petición — puede venir de un
-//   proxy o balanceador que la cortó después de que el servidor ya
-//   hubiera guardado el folio, y antes de que la respuesta de éxito
-//   llegara de vuelta. Tratarlo igual que un 400/409 (rechazo
-//   definitivo, se borra el intento) perdía la única referencia que
-//   permitía reconciliar un folio que en realidad sí se había creado.
-// Solo un 4xx (400, 404, 409…) es de verdad definitivo: ahí sí hubo
-// una decisión real del servidor sobre el contenido de la petición.
+// Los rechazos de sesión y los fallos de transporte no confirman si
+// un intento anterior se guardó. Su referencia debe conservarse.
 function resultadoDesconocido(err: unknown): boolean {
-  if (err instanceof TypeError) return true;
-  if (err instanceof ErrorApi) return err.status >= 500;
-  return false;
+  if (err instanceof ErrorApi) return err.status >= 500 || [401, 403, 408, 429].includes(err.status);
+  return true;
 }
 
 export default function NewTicket() {
@@ -132,6 +116,11 @@ export default function NewTicket() {
       let entrada: IntentoGuardado;
       try {
         entrada = JSON.parse(guardado);
+        if (!entrada || typeof entrada.usuarioId !== "string" || !entrada.ticket ||
+            typeof entrada.ticket.servicioId !== "string" || typeof entrada.ticket.idempotencyKey !== "string" ||
+            claveStorageDe(entrada.ticket.idempotencyKey) !== clave || !Array.isArray(entrada.ticket.procedimientoIds)) {
+          throw new Error("Intento guardado inválido.");
+        }
       } catch {
         try {
           sessionStorage.removeItem(clave);
@@ -319,7 +308,7 @@ export default function NewTicket() {
       // recepción podía pensar que sí quedó cobrado cuando en realidad
       // nunca se guardó, un problema real de cuadre de caja.
       if (!resultadoDesconocido(err)) {
-        // El servidor ya dio una decisión real y definitiva (4xx) — no
+        // El servidor ya dio una decisión definitiva sobre los datos — no
         // una caída de red ni un 5xx de por medio — así que conservar
         // el intento solo lo reenviaría idéntico, y con el mismo
         // rechazo, en cada recarga.

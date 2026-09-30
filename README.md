@@ -16,7 +16,14 @@ con el desempeño de cada servicio y cada procedimiento.
 - **Folios y cobros**: registro de procedimientos, pagos y créditos
   pendientes, con búsqueda global entre servicios.
 - **Cortes de caja**: por día (agrupado por forma de pago) y por mes
-  (desglose por procedimiento), imprimibles o exportables.
+  (desglose por procedimiento), imprimibles o exportables. El corte del
+  día se compara con el reporte diario de Getnet (Excel o CSV) de la
+  referencia de cada servicio, y solo se envía si cuadra o si un
+  administrador lo aprueba con su motivo.
+- **Requisiciones de compra** con el formato institucional: artículos con
+  marca, página de internet e imagen, motivo, firma y sello. Se envían
+  a un administrador o a finanzas, que las revisan y aprueban en la app,
+  o se descargan (imprimir / guardar como PDF).
 - **Panel financiero**: ingresos por mes, por servicio y por
   procedimiento, comparativo contra el mes anterior, reportes imprimibles.
 - **Registro solo por invitación**: un administrador invita por correo;

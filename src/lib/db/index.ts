@@ -74,5 +74,11 @@ export const estadoAsistente = modo.estadoAsistente;
 export const listarRequisiciones = modo.listarRequisiciones;
 export const crearRequisicion = modo.crearRequisicion;
 export const resolverRequisicion = modo.resolverRequisicion;
+export const obtenerRequisicion = modo.obtenerRequisicion;
+export const enviarRequisicion = modo.enviarRequisicion;
+export const obtenerCierreCaja = modo.obtenerCierreCaja;
+export const conciliarCierreCaja = modo.conciliarCierreCaja;
+export const aprobarCierreConDiferencia = modo.aprobarCierreConDiferencia;
+export const marcarCierreEnviado = modo.marcarCierreEnviado;
 
 export * from "./types";

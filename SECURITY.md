@@ -150,6 +150,16 @@ base de datos en ejecución, no únicamente mediante revisión de código.
 - Dependencias sin vulnerabilidades conocidas (`npm audit` limpio en
   frontend y servidor), verificado en cada modificación del proyecto.
 
+- **Segundo factor en cuentas creadas solo con Microsoft**: una cuenta
+  sin contraseña propia puede activar el 2FA reautenticándose en
+  Microsoft, y también desactivarlo así (con un token de un solo
+  propósito, atado a esa cuenta y a la vigencia de su sesión). Antes
+  podía activarlo pero no desactivarlo.
+- **El bloqueo por intentos fallidos cuenta las ráfagas**: el intento
+  fallido (contraseña o segundo factor) se registra antes de responder.
+  Si se registrara en segundo plano, un intento inmediato podía leer el
+  contador sin contarlo y el bloqueo de 5 intentos no se activaba.
+
 ## Autorización y control de acceso
 
 Cada tabla de la base de datos aplica reglas de seguridad a nivel de
@@ -448,6 +458,51 @@ autenticada y con permiso legítimo para generar folios.
     al ver un rechazo, borraba el intento guardado, perdiendo la única
     referencia que hubiera servido para reconciliar el folio original.
 
+## Requisiciones de compra y cierre de caja conciliado
+
+**Requisiciones.**
+
+- La firma y el sello de una requisición son los del perfil de quien la
+  crea o la resuelve, leídos por el servidor en ese momento — el cliente
+  nunca manda la imagen de una firma ajena. Se guardan como **copia**,
+  no como enlace: cambiar la firma después no altera una requisición ya
+  hecha.
+- **Quién puede recibirla** lo decide la base de datos
+  (`es_destinatario_valido`, con `SECURITY DEFINER` porque quien envía no
+  puede leer el acceso de otras personas): un administrador, o alguien
+  de finanzas con acceso completo al servicio y todavía en la
+  organización. Personal, finanzas sin acceso y personas inexistentes
+  se rechazan con 400; nadie puede enviársela a sí mismo.
+- **Quién puede resolverla**: solo un administrador o la persona a quien
+  se le envió, y solo mientras siga pendiente (la condición va en el
+  propio `UPDATE`, no solo en la interfaz). Quien la solicitó puede
+  reenviarla mientras esté pendiente, pero no resolverla.
+- Los artículos se validan uno por uno (1 a 30, cantidad entera, texto
+  sin caracteres nulos, enlace solo `http(s)://`, imagen solo
+  PNG/JPG/WebP/GIF — **no SVG** — con tope por imagen y en conjunto). El
+  listado no arrastra imágenes, firmas ni sellos; solo el detalle.
+
+**Cierre de caja con Getnet.**
+
+- El servidor calcula por su cuenta el lado del sistema (cobros con
+  tarjeta pagados ese día, en la zona horaria del servidor) y hace la
+  comparación en centavos enteros; el cliente solo aporta la lista de
+  movimientos del reporte ya interpretada. El archivo se lee en el
+  navegador y **no se guarda**: solo su nombre, su huella SHA-256 y los
+  montos y autorizaciones comparados, sin números de tarjeta.
+- Es un control contra **errores y descuidos**, no contra alguien que
+  fabrique a propósito los movimientos: quien sube el reporte lo aporta.
+  Por eso queda constancia de quién lo subió, cuándo, con qué archivo, y
+  las aprobaciones con diferencia exigen un administrador y un motivo,
+  y quedan en la bitácora.
+- Si cambian los cobros con tarjeta después de comparar, la comparación
+  deja de valer: no se puede aprobar ni marcar como enviada hasta
+  repetirla. Una cuenta de solo consulta ve el resultado pero no puede
+  subir ni marcar el envío (la política SQL filtra el `UPDATE` a cero
+  filas, y la ruta lo trata como 403).
+- Enviar el corte es un archivo más: la puerta «solo se envía si cuadra»
+  está en la interfaz, no en `POST /archivos`.
+
 ## Protección de contenido generado por usuarios
 
 - **XSS**: la interfaz está construida en React, que escapa
@@ -471,7 +526,13 @@ autenticada y con permiso legítimo para generar folios.
   de la institución hasta que su equipo de sistemas decida y configure
   su exposición externa, con su propio dominio, certificado HTTPS y
   reglas de firewall.
-- CORS restringido al origen exacto configurado para el frontend.
+- CORS restringido al origen exacto configurado para el frontend. Además,
+  una petición que **escribe** (POST, PUT, PATCH, DELETE) y trae una
+  cabecera `Origin` de un sitio no autorizado se rechaza con 403 antes de
+  llegar a la ruta: CORS solo impide que otro sitio *lea* la respuesta,
+  no que la petición se ejecute. Las peticiones sin `Origin` (clientes de
+  línea de comandos, pruebas) siguen admitidas — la autenticación sigue
+  siendo la cookie de sesión.
 - Cabeceras de seguridad estándar (`helmet`): protección contra
   clickjacking, detección incorrecta de tipo de contenido, entre otras.
 - Todas las consultas a la base de datos usan parámetros — no existe
@@ -498,6 +559,10 @@ autenticada y con permiso legítimo para generar folios.
   cualquiera podía llenar el disco del servidor con el tiempo. Marcar
   un archivo como leído y consultar la bandeja de recibidos no
   comparten ese límite, al ser acciones frecuentes y sin ese riesgo.
+- **Cuerpos más grandes solo donde hacen falta**: `POST /requisiciones`
+  acepta hasta 2.5mb (hasta 30 imágenes de artículos ya reducidas por el
+  navegador, con un tope total) y `POST /cierres-caja/conciliar` hasta
+  1mb (hasta 5,000 movimientos del reporte de Getnet).
 - **Tres límites de tamaño de cuerpo, no uno solo para toda la API**:
   `POST /archivos` acepta hasta 5mb (los archivos viajan en base64);
   `PATCH /usuarios/:id` y `PATCH /organizaciones/:id` aceptan hasta
@@ -772,6 +837,12 @@ es la única forma de usar Quick, y su ausencia nunca rompe nada más.
   un respaldo incompleto representa un riesgo mayor que la ausencia de
   respaldo. Verificado de punta a punta: generación, restauración en una
   base de datos nueva, y confirmación de integridad de datos y roles.
+- **El archivo de respaldo se escribe completo o no se escribe**: se
+  genera con extensión `.partial`, se comprueba que no esté vacío, se le
+  restringen los permisos (solo su dueño) y solo entonces se renombra a
+  `.sql`. Antes, un `pg_dump` interrumpido podía dejar un `.sql`
+  incompleto que parecía un respaldo válido. El nombre incluye un sufijo
+  aleatorio, así dos respaldos en el mismo segundo no se pisan.
 - Los mensajes de error del proceso de respaldo se filtran para eliminar
   cualquier credencial de conexión antes de escribirse en el registro o
   la consola, incluyendo los casos donde la contraseña contiene

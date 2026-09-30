@@ -37,6 +37,19 @@ inicio de sesión con Microsoft (sección 3) sí requiere hacerse
 manualmente, dado que necesita acceso al panel de administración de
 Microsoft de la institución.
 
+**Si ya tenías Finaquick instalado** (una base `finaquick_local` de una
+versión anterior) y al abrir el instalador contestas que **no** quieres
+borrarla, el instalador le aplica solo la actualización de estructura
+(`servidor/actualizar_esquema_20260930.sql`): agrega las columnas y
+tablas de las requisiciones con formato y de la conciliación con Getnet,
+no borra ni cambia tus datos, y se puede repetir. Con una instalación
+manual, corre esa actualización a mano, con el mismo usuario que aplicó
+el esquema:
+
+```bash
+psql -v ON_ERROR_STOP=1 -d finaquick_local -f servidor/actualizar_esquema_20260930.sql
+```
+
 ## 2. Instalación manual
 
 Usar esta ruta para revisar cada paso individualmente, o si la
@@ -535,7 +548,10 @@ indica si el proceso está activo.
 
 `servidor/api/test/` contiene una suite de pruebas que arranca el
 servidor real contra una base de datos de pruebas (separada de
-cualquier dato real, se crea y se borra sola en cada corrida) y
+cualquier dato real, se crea y se borra sola en cada corrida; usa además
+roles de PostgreSQL temporales con nombre aleatorio, que se eliminan al
+terminar — nunca toca la contraseña del rol `finaquick_app` de una
+instalación real que comparta ese servidor de PostgreSQL) y
 confirma en vivo, por HTTP, que los controles de seguridad y
 validación descritos en `SECURITY.md` siguen funcionando — registro
 solo por invitación, suplantación de identidad bloqueada, bloqueo de
@@ -561,8 +577,10 @@ porcentaje de cada archivo del servidor quedó ejercitado por alguna
 prueba) — nativo de Node.js, sin ninguna herramienta adicional.
 
 Aparte, el clasificador de preguntas de Quick que funciona sin IA
-(`src/lib/smartSearch.ts`) tiene sus propias pruebas, que no necesitan
-base de datos ni servidor — desde la carpeta principal del proyecto:
+(`src/lib/smartSearch.ts`), el lector del reporte de Getnet
+(`src/lib/getnet.ts`) y la recuperación de un folio cuya respuesta se
+perdió tienen sus propias pruebas, que no necesitan base de datos ni
+servidor — desde la carpeta principal del proyecto:
 
 ```bash
 npm test
@@ -646,3 +664,63 @@ cuántos usuarios simular.
 
 El sistema no depende de ninguna cuenta ni servicio en la nube de
 terceros para funcionar.
+
+## 12. Requisiciones de compra y conciliación del corte con Getnet
+
+### Requisiciones de compra
+
+1. **Antes de empezar**, cada persona guarda en **Mi perfil** su firma
+   (se dibuja) y su sello (se sube una imagen, mejor con fondo blanco o
+   transparente). Un administrador puede poner en **Configuración →
+   Marca** el *encabezado de los documentos* (razón social, domicilio,
+   RFC…), que sale arriba en lo impreso.
+2. **Crear**: Requisiciones → *Nueva requisición*. Se llena como el
+   formato de papel: departamento, hasta 30 artículos (cantidad,
+   artículo, marca, página de internet e imagen — la imagen se reduce
+   sola) y el motivo. Se puede firmar y sellar con lo guardado en el
+   perfil.
+3. **Enviar**: a un administrador o a alguien de finanzas con acceso al
+   servicio. Se puede guardar ahora y enviar después, o reenviar a otra
+   persona mientras siga pendiente. Si el correo está configurado
+   (sección 4), a quien la recibe le llega un aviso.
+4. **Revisar**: la persona a quien se le envió, o cualquier
+   administrador, abre la requisición en la app y la aprueba o la
+   rechaza (con motivo), estampando su firma y su sello si quiere.
+5. **Descargar**: *Imprimir / guardar PDF* abre el diálogo de impresión
+   del navegador; en «Destino» se elige «Guardar como PDF». Los tres
+   recuadros de firma son el solicitante, el responsable de compras
+   (quien la revisa) y administración, que queda en blanco para firmarse
+   en papel.
+
+### Conciliación del corte de caja con Getnet
+
+1. **Referencia**: en **Configuración → Servicios**, cada servicio que
+   cobra con terminal Getnet lleva su referencia (por ejemplo `566029`
+   para odontología). Sirve para tomar solo sus movimientos del reporte.
+2. **Reporte del día**: se descarga del portal de Getnet en Excel
+   (`.xlsx`) o CSV. En **Cierre de caja** (vista por día) se elige la
+   fecha y se usa *Subir reporte de Getnet*. El archivo se lee en el
+   navegador: no se sube a ningún lado.
+3. **Lectura**: las columnas de monto, fecha, autorización y tipo de
+   movimiento se detectan por el nombre de su encabezado; solo se toman
+   las filas de la referencia del servicio y del día elegido, y se
+   omiten las operaciones rechazadas. Si algún encabezado no se
+   reconoce, se puede indicar la columna a mano antes de comparar.
+4. **Comparación**: los cobros con tarjeta (débito y crédito) del
+   sistema ese día contra los movimientos del reporte, uno a uno por
+   monto. Una cancelación anula una venta del mismo monto. El resultado
+   es *cuadra* o *no cuadra*, con la lista de lo que está de un lado y no
+   del otro.
+5. **Enviar**: con la referencia configurada y cobros con tarjeta ese
+   día, el corte solo se envía si cuadra, o si un administrador lo
+   aprueba «con diferencia» dejando el motivo. Si después cambian los
+   cobros con tarjeta de ese día, la comparación deja de valer y hay que
+   repetirla. Un día sin cobros con tarjeta se envía como siempre.
+
+Se guardan el nombre del archivo, su huella (SHA-256) y los montos y
+autorizaciones comparados; **no** el archivo ni números de tarjeta. El
+«día» del corte es el de la zona horaria del servidor (`ZONA_HORARIA`,
+sección 2). Este control detecta errores de captura y cobros que no
+cuadran; no sustituye la conciliación bancaria. Los encabezados del
+reporte real de cada cuenta pueden variar: conviene probarlo con uno
+real antes de depender de él.

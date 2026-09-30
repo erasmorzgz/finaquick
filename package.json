@@ -11,7 +11,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "tsx --test src/lib/smartSearch.test.ts",
+    "test": "tsx --test src/lib/smartSearch.test.ts src/lib/getnet.test.ts && node --test test/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

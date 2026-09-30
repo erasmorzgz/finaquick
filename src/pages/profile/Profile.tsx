@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { Camera, Check, Eraser, PenLine, Save, ShieldCheck, KeyRound, Eye, Smartphone, X } from "lucide-react";
+import { Camera, Check, Eraser, PenLine, Save, ShieldCheck, KeyRound, Eye, Smartphone, Stamp, X } from "lucide-react";
 import { Card, CardBody, SectionLabel } from "../../components/ui/Card";
 import { Field, Input } from "../../components/ui/Input";
 import { Button } from "../../components/ui/Button";
@@ -11,6 +11,7 @@ import { useOrg } from "../../lib/theme/OrgContext";
 import * as db from "../../lib/db";
 import type { ServiceConfig } from "../../lib/db/types";
 import { URL_BASE } from "../../lib/db/localApiAdapter";
+import { reducirImagen } from "../../lib/imagenes";
 import { useAvisos } from "@/lib/avisos/AvisosContext";
 
 const ROLE_LABEL: Record<string, string> = { admin: "Administrador", finanzas: "Finanzas", personal: "Personal" };
@@ -27,6 +28,9 @@ export default function Profile() {
   const [bio, setBio] = useState(user?.bio ?? "");
   const [fotoUrl, setFotoUrl] = useState(user?.fotoUrl);
   const [firmaUrl, setFirmaUrl] = useState(user?.firmaUrl);
+  const [selloUrl, setSelloUrl] = useState(user?.selloUrl);
+  const [errorSello, setErrorSello] = useState<string | null>(null);
+  const selloRef = useRef<HTMLInputElement>(null);
   const [servicios, setServicios] = useState<ServiceConfig[]>([]);
   const [guardado, setGuardado] = useState(false);
   const avisar = useAvisos();
@@ -53,12 +57,26 @@ export default function Profile() {
     reader.readAsDataURL(file);
   }
 
+  async function onSello(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setErrorSello(null);
+    try {
+      // PNG (conserva la transparencia del sello), reducido para que quepa.
+      setSelloUrl(await reducirImagen(file, { maxLado: 420, formato: "png", maxCaracteres: 900_000 }));
+    } catch (err) {
+      setErrorSello(err instanceof Error ? err.message : "No se pudo usar esa imagen.");
+    }
+  }
+
   async function guardar() {
     if (!user) return;
     setErrorGuardar(null);
     setGuardando(true);
     try {
-      await db.actualizarPerfil(user.id, { nombre, telefono, bio, fotoUrl, firmaUrl });
+      // selloUrl "" quita el sello guardado.
+      await db.actualizarPerfil(user.id, { nombre, telefono, bio, fotoUrl, firmaUrl, selloUrl: selloUrl ?? "" });
       await refresh();
       avisar({ status: "success", title: "Perfil actualizado" });
       setGuardado(true);
@@ -141,6 +159,28 @@ export default function Profile() {
             estampa sin que tengas que volver a dibujarla.
           </p>
           <FirmaCanvas value={firmaUrl} onChange={setFirmaUrl} />
+
+          <SectionLabel className="mt-6">Sello</SectionLabel>
+          <p className="mb-3 text-sm text-[var(--color-text-secondary)]">
+            Sube una imagen de tu sello (mejor con fondo transparente o blanco). Después puedes estamparlo, junto con tu firma,
+            en una requisición.
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex h-24 w-32 items-center justify-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
+              {selloUrl ? <img src={selloUrl} alt="Tu sello" className="max-h-full max-w-full object-contain" /> : <Stamp size={22} className="text-[var(--color-text-muted)]" aria-hidden />}
+            </div>
+            <div className="flex flex-col items-start gap-1.5">
+              <Button type="button" variant="secondary" size="sm" icon={<Stamp size={14} />} onClick={() => selloRef.current?.click()}>
+                {selloUrl ? "Cambiar sello" : "Subir sello"}
+              </Button>
+              {selloUrl && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => setSelloUrl(undefined)}>Quitar sello</Button>
+              )}
+              <input ref={selloRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={onSello} />
+            </div>
+          </div>
+          {errorSello && <p role="alert" className="mt-2 text-sm text-red-700">{errorSello}</p>}
+          <p className="mt-2 text-xs text-[var(--color-text-muted)]">Recuerda tocar «Guardar» para que el sello quede en tu perfil.</p>
 
           <SectionLabel className="mt-6">Servicios asignados</SectionLabel>
           <p className="mb-3 text-sm text-[var(--color-text-secondary)]">
@@ -245,7 +285,17 @@ function Tarjeta2FA() {
   // reautenticación con Microsoft YA demostró quién es, así que esto
   // continúa solo, igual que si hubiera escrito su contraseña.
   useEffect(() => {
-    const reauthToken = new URLSearchParams(window.location.hash.slice(1)).get("reauth2fa");
+    const fragmento = new URLSearchParams(window.location.hash.slice(1));
+    const tokenDesactivar = fragmento.get("reauth2faDesactivar");
+    if (tokenDesactivar) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      setCargando(true);
+      db.desactivar2FA({ reauthToken: tokenDesactivar }).then(refresh)
+        .catch((err) => setError(err instanceof Error ? err.message : "No se pudo desactivar."))
+        .finally(() => setCargando(false));
+      return;
+    }
+    const reauthToken = fragmento.get("reauth2fa");
     if (!reauthToken) return;
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
     setError(null);
@@ -351,7 +401,7 @@ function Tarjeta2FA() {
           ) : (
             <div className="flex items-center gap-3">
               <Badge tone="brand"><Check size={12} className="mr-1 inline" /> Activada</Badge>
-              <Button variant="ghost" size="sm" icon={<X size={14} />} onClick={() => setDesactivando(true)}>Desactivar</Button>
+              <Button variant="ghost" size="sm" icon={<X size={14} />} onClick={() => { if (user.soloMicrosoft) window.location.href = `${URL_BASE}/auth/microsoft/iniciar?intent=2fa_desactivar`; else setDesactivando(true); }}>Desactivar</Button>
             </div>
           )
         ) : configurando ? (

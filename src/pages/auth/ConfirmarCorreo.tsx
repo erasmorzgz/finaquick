@@ -7,21 +7,24 @@ import * as db from "../../lib/db";
 export default function ConfirmarCorreo() {
   const [params] = useSearchParams();
   const token = params.get("token") ?? "";
-  const [estado, setEstado] = useState<"cargando" | "listo" | "error">("cargando");
-  const [error, setError] = useState<string | null>(null);
+  return <Confirmacion key={token} token={token} />;
+}
+
+function Confirmacion({ token }: { token: string }) {
+  const [estado, setEstado] = useState<"cargando" | "listo" | "error">(token ? "cargando" : "error");
+  const [error, setError] = useState<string | null>(token ? null : "Este enlace no trae la información necesaria.");
 
   useEffect(() => {
-    if (!token) {
-      setEstado("error");
-      setError("Este enlace no trae la información necesaria.");
-      return;
-    }
+    if (!token) return;
+    let activo = true;
     db.confirmarCorreo(token)
-      .then(() => setEstado("listo"))
+      .then(() => { if (activo) setEstado("listo"); })
       .catch((err) => {
+        if (!activo) return;
         setEstado("error");
         setError(err instanceof Error ? err.message : "No se pudo confirmar el correo.");
       });
+    return () => { activo = false; };
   }, [token]);
 
   return (

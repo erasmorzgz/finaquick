@@ -33,6 +33,12 @@ import { AnimatedNumber } from "@/components/motion/animated-number";
 // misma categoría se vea siempre del mismo color entre una gráfica y otra.
 const SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
 
+function mesPrevio(mes: string) {
+  const [anio, numero] = mes.split("-").map(Number);
+  const fecha = new Date(anio, numero - 2, 15);
+  return `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function mesLocal(iso: string) {
   const d = new Date(iso);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -73,6 +79,11 @@ function ChartTooltip({ active, payload, label }: any) {
 
 export default function FinanceDashboard() {
   const { org } = useOrg();
+  return <FinanceDashboardContent key={org?.id} />;
+}
+
+function FinanceDashboardContent() {
+  const { org } = useOrg();
   const [servicios, setServicios] = useState<ServiceConfig[]>([]);
   const [filtroServicio, setFiltroServicio] = useState<string>("");
   const [mensual, setMensual] = useState<MonthlyRevenuePoint[]>([]);
@@ -87,7 +98,6 @@ export default function FinanceDashboard() {
 
   useEffect(() => {
     if (!org) return;
-    setFiltroServicio("");
     db.listarServicios(org.id).then(setServicios);
     db.comparativoMensualPorServicio(org.id).then(setComparativo);
     db.totalPendienteCreditos(org.id).then(setPendienteCreditos);
@@ -124,10 +134,8 @@ export default function FinanceDashboard() {
   // imprimible se queda en el mes más reciente con datos — se deriva en
   // cada render en vez de sincronizarlo con un efecto.
   const mesReporte = mesReporteElegido || mensual.at(-1)?.mes || "";
-  // El mes anterior al elegido, tomado de la misma lista (siempre en
-  // orden cronológico) — así la comparación sigue al mes que se está
-  // viendo, no siempre al más reciente.
-  const mesAnteriorReporte = mensual[mensual.findIndex((m) => m.mes === mesReporte) - 1]?.mes;
+  // Comparar contra el mes calendario anterior, aunque no tenga cobros.
+  const mesAnteriorReporte = mesReporte ? mesPrevio(mesReporte) : undefined;
 
   useEffect(() => {
     if (!org || !mesReporte) return;
@@ -146,8 +154,9 @@ export default function FinanceDashboard() {
     [mesAnteriorReporte, porServicioMesAnterior]
   );
 
-  const mesActualTotal = mensual.at(-1)?.total ?? 0;
-  const mesAnteriorTotal = mensual.at(-2)?.total ?? 0;
+  const mesHoy = mesLocal(new Date().toISOString());
+  const mesActualTotal = mensual.find((m) => m.mes === mesHoy)?.total ?? 0;
+  const mesAnteriorTotal = mensual.find((m) => m.mes === mesPrevio(mesHoy))?.total ?? 0;
   const deltaMes = mesAnteriorTotal > 0 ? ((mesActualTotal - mesAnteriorTotal) / mesAnteriorTotal) * 100 : null;
 
   const totalGeneralHistorico = useMemo(() => mensual.reduce((s, m) => s + m.total, 0), [mensual]);
@@ -160,7 +169,7 @@ export default function FinanceDashboard() {
   }, [servicios]);
 
   const mesReporteLabel = mensual.find((m) => m.mes === mesReporte)?.label ?? mesReporte;
-  const mesAnteriorReporteLabel = mensual.find((m) => m.mes === mesAnteriorReporte)?.label;
+  const mesAnteriorReporteLabel = mensual.find((m) => m.mes === mesAnteriorReporte)?.label ?? mesAnteriorReporte;
   const totalReporte = useMemo(() => porServicioReporte.reduce((s, p) => s + p.total, 0), [porServicioReporte]);
   const totalMesAnteriorReporte = useMemo(() => datosMesAnterior.reduce((s, p) => s + p.total, 0), [datosMesAnterior]);
   const deltaReporte = totalMesAnteriorReporte > 0 ? ((totalReporte - totalMesAnteriorReporte) / totalMesAnteriorReporte) * 100 : null;
@@ -217,7 +226,7 @@ export default function FinanceDashboard() {
           value={<AnimatedNumber value={mesActualTotal} format={compact} duration={0.9} />}
           icon={<TrendingUp size={18} className="text-white/80" />}
           delta={deltaMes === null ? null : { value: `${Math.abs(deltaMes).toFixed(1)}%`, positive: deltaMes >= 0 }}
-          sub={`Acumulado 6 meses: ${compact(totalGeneralHistorico)}`}
+          sub={`Acumulado histórico: ${compact(totalGeneralHistorico)}`}
         />
         <StatCard label="Créditos pendientes" value={<AnimatedNumber value={pendienteCreditos} format={compact} duration={0.9} />} icon={<Wallet size={16} className="text-brand-500" />} />
         <StatCard

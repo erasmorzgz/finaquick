@@ -7,10 +7,13 @@ import { Select } from "../../components/ui/Input";
 import { EmptyState, StatCard, Badge } from "../../components/ui/Misc";
 import { EnviarArchivoModal } from "../../components/ui/EnviarArchivoModal";
 import { PrintReportHeader, PrintReportFooter, PrintReportTotalBar } from "../../components/ui/PrintReport";
+import { ConciliacionGetnet } from "./ConciliacionGetnet";
+import { ESTADO_CIERRE_LABEL } from "../../lib/cierreEstado";
 import { useService } from "../../lib/service/ServiceContext";
 import { useOrg } from "../../lib/theme/OrgContext";
+import { useAuth } from "../../lib/auth/AuthContext";
 import * as db from "../../lib/db";
-import type { FormaPago, Ticket } from "../../lib/db/types";
+import type { CierreCajaConVigencia, FormaPago, Ticket } from "../../lib/db/types";
 import { formatoMXN, generarCSV } from "../../lib/utils";
 // En su propio archivo (no aquí) para que SmartSearchModal.tsx pueda
 // agrupar "cortes de caja"/"resumen" con exactamente el mismo criterio
@@ -69,6 +72,7 @@ const TONE_FORMA: Record<GrupoForma, "good" | "brand" | "warning" | "neutral"> =
 export default function CashClose() {
   const { servicioActual } = useService();
   const { org } = useOrg();
+  const { user } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [vista, setVista] = useState<"dia" | "mes">("dia");
   // ?fecha=YYYY-MM-DD en la URL preselecciona el día — así la búsqueda
@@ -98,6 +102,40 @@ export default function CashClose() {
     () => tickets.filter((t) => fechaLocal(fechaEfectiva(t)) === fecha).sort((a, b) => fechaEfectiva(a).localeCompare(fechaEfectiva(b))),
     [tickets, fecha]
   );
+
+  // ---------- Conciliación con Getnet ----------
+  // La comparación guardada para este servicio y día; se ignora la de
+  // otro día/servicio que tarde en llegar (mismo patrón que la búsqueda).
+  const claveCierre = `${servicioActual?.id ?? ""}|${fecha}`;
+  const [cierreInfo, setCierreInfo] = useState<{ clave: string; datos: CierreCajaConVigencia } | null>(null);
+  useEffect(() => {
+    if (!servicioActual || vista !== "dia") return;
+    let vigente = true;
+    db.obtenerCierreCaja(servicioActual.id, fecha)
+      .then((datos) => { if (vigente) setCierreInfo({ clave: claveCierre, datos }); })
+      .catch(() => {});
+    return () => { vigente = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claveCierre, vista, tickets]);
+  const conciliacion = cierreInfo?.clave === claveCierre ? cierreInfo.datos : null;
+  const cobrosTarjeta = delDia.filter((t) => t.formaPago === "Tarjeta de débito" || t.formaPago === "Tarjeta de crédito").length;
+  // Con la referencia de Getnet configurada y cobros con tarjeta ese día,
+  // solo se envía un corte que cuadra (o que un administrador aprobó).
+  const exigeConciliacion = !!servicioActual?.referenciaGetnet && cobrosTarjeta > 0;
+  const conciliado = !!conciliacion?.cierre && conciliacion.vigente && conciliacion.cierre.estado !== "no_aprobado";
+  const puedeEnviar = !exigeConciliacion || conciliado;
+  const puedeOperar = !!servicioActual && !user?.serviciosSoloConsulta?.includes(servicioActual.id);
+
+  async function alEnviar() {
+    // Deja constancia de que este corte ya se envió.
+    if (conciliacion?.cierre && conciliado) {
+      try {
+        setCierreInfo({ clave: claveCierre, datos: await db.marcarCierreEnviado(conciliacion.cierre.id) });
+      } catch {
+        /* el archivo ya se envió; la marca es solo constancia */
+      }
+    }
+  }
 
   useEffect(() => {
     setIncluidos(new Set(delDia.map((t) => t.id)));
@@ -143,9 +181,10 @@ export default function CashClose() {
     filas.push([]);
     for (const g of grupos) filas.push(["", "", `Subtotal ${g.forma}`, g.subtotal]);
     filas.push(["", "", "Total del día", total]);
+    if (conciliacion?.cierre) filas.push(["", "", "Conciliación con Getnet", `${ESTADO_CIERRE_LABEL[conciliacion.cierre.estado]} (diferencia ${conciliacion.cierre.diferencia.toFixed(2)})`]);
     return generarCSV(["Folio", "Nombre", "Forma de pago", "Total"], filas);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seleccionados, grupos, total]);
+  }, [seleccionados, grupos, total, conciliacion]);
 
   // ---------- Vista por mes: desglose por procedimiento ----------
   const mesesDisponibles = useMemo(
@@ -218,7 +257,14 @@ export default function CashClose() {
               </Select>
             </div>
             <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
-              <Button variant="secondary" className="flex-1 sm:flex-none" icon={<Send size={16} />} onClick={() => setEnviarAbierto(true)} disabled={seleccionados.length === 0}>
+              <Button
+                variant="secondary"
+                className="flex-1 sm:flex-none"
+                icon={<Send size={16} />}
+                onClick={() => setEnviarAbierto(true)}
+                disabled={seleccionados.length === 0 || !puedeEnviar}
+                title={!puedeEnviar ? "Compara primero el corte con el reporte de Getnet" : undefined}
+              >
                 Enviar
               </Button>
               <Button className="flex-1 sm:flex-none" icon={<Printer size={16} />} onClick={() => window.print()} disabled={seleccionados.length === 0}>
@@ -243,6 +289,23 @@ export default function CashClose() {
           </>
         )}
       </div>
+
+      {vista === "dia" && servicioActual && delDia.length > 0 && (
+        <ConciliacionGetnet
+          servicio={servicioActual}
+          fecha={fecha}
+          info={conciliacion}
+          esAdmin={user?.rol === "admin"}
+          puedeOperar={puedeOperar}
+          cobrosTarjeta={cobrosTarjeta}
+          onActualizado={(datos) => setCierreInfo({ clave: claveCierre, datos })}
+        />
+      )}
+      {vista === "dia" && exigeConciliacion && !conciliado && delDia.length > 0 && (
+        <p role="status" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900 print:hidden">
+          Para enviar este corte, compáralo primero con el reporte de Getnet.
+        </p>
+      )}
 
       {vista === "dia" ? (
         delDia.length === 0 ? (
@@ -320,7 +383,7 @@ export default function CashClose() {
                             </th>
                           </tr>
                           <tr className="text-left text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                            <th className="w-11 py-2 pl-4 pr-3 print:w-0 print:p-0" />
+                            <th className="w-11 py-2 pl-4 pr-3 print:w-0 print:p-0"><span className="sr-only">Incluir en el cierre</span></th>
                             <th className="py-2 pr-3 print:pl-4">Hora</th>
                             <th className="py-2 pr-3">Folio</th>
                             <th className="py-2 pr-3">Nombre</th>
@@ -372,6 +435,13 @@ export default function CashClose() {
             <div className="mt-5">
               <PrintReportTotalBar label="Total del día" value={formatoMXN(total)} />
             </div>
+            {conciliacion?.cierre && (
+              <p className="mt-3 hidden break-inside-avoid border border-black/15 px-3 py-2 text-xs print:block">
+                <strong>Conciliación con Getnet:</strong> {ESTADO_CIERRE_LABEL[conciliacion.cierre.estado]}
+                {conciliacion.vigente ? "" : " (desactualizada)"} · Sistema (tarjeta) {formatoMXN(conciliacion.cierre.totalSistema)} · Getnet {formatoMXN(conciliacion.cierre.totalGetnet)} · Diferencia {formatoMXN(conciliacion.cierre.diferencia)}
+                {conciliacion.cierre.observacion ? ` · Motivo: ${conciliacion.cierre.observacion}` : ""}
+              </p>
+            )}
 
             <PrintReportFooter orgNombre={org?.nombre} />
           </div>
@@ -439,6 +509,7 @@ export default function CashClose() {
           servicioNombre={servicioActual.nombre}
           nombreArchivo={`${slug(label)}-${slug(servicioActual.nombre)}-${fecha}.csv`}
           contenido={csv}
+          onEnviado={alEnviar}
         />
       )}
     </div>

@@ -14,6 +14,9 @@ export interface Organization {
   nombre: string;
   colorPrimario: string; // hex; de aquí se deriva toda la escala --color-brand-*
   logoUrl?: string; // dataURL; opcional, el cliente puede no tener logo todavía
+  // Líneas de encabezado que se imprimen en los documentos (razón social,
+  // domicilio, RFC…). Opcional.
+  encabezadoDocumentos?: string;
 }
 
 export interface UserProfile {
@@ -27,6 +30,9 @@ export interface UserProfile {
   // clic al aprobar/rechazar una requisición, en vez de dibujarla cada
   // vez (ver Requisicion.firmaResolucion más abajo).
   firmaUrl?: string;
+  // Sello (imagen subida una vez desde Mi perfil), que se puede estampar
+  // junto con la firma en una requisición. Se quita guardando "".
+  selloUrl?: string;
   bio?: string;
   rol: Role;
   orgIds: string[]; // a qué organizaciones (equipos/workspaces) pertenece esta cuenta
@@ -85,6 +91,7 @@ export interface Invitacion {
 // cubre Actividad), solo lo que un administrador decide y que conviene
 // poder rastrear después.
 export interface EventoAuditoria {
+  cursorFecha?: string;
   id: string;
   orgId: string;
   actorId: string;
@@ -114,6 +121,10 @@ export interface ServiceConfig {
   cierreCajaLabel: string; // nombre "profesional" configurable, ej. "Cierre de caja"
   features: ServiceFeatureFlags;
   activo: boolean;
+  // Referencia (afiliación) del terminal Getnet de este servicio: sirve
+  // para tomar solo sus movimientos del reporte diario al conciliar el
+  // corte de caja.
+  referenciaGetnet?: string;
 }
 
 export interface CategoriaServicio {
@@ -188,24 +199,49 @@ export interface NuevoTicket {
 
 export type EstadoRequisicion = "pendiente" | "aprobada" | "rechazada";
 
-// Solicitud interna de compra/material, con aprobación de un
-// administrador — no es un folio de cobro, no tiene total ni forma de
-// pago. La firma, cuando existe, es una copia del momento en que se
-// resolvió (aprobó/rechazó), no un enlace vivo al perfil de esa
-// persona.
+/** Un renglón de la requisición de compra. */
+export interface ArticuloRequisicion {
+  cantidad: number;
+  articulo: string;
+  marca?: string;
+  url?: string; // página de internet donde se ve el producto
+  imagen?: string; // dataURL reducida; solo viaja en el detalle
+  tieneImagen?: boolean; // en el listado, sin la imagen en sí
+}
+
+// Solicitud interna de compra/material, con el formato de "Requisición
+// de compra": departamento, motivo y una lista de artículos, con la
+// firma y el sello opcionales de quien la solicita y de quien la
+// resuelve (copias del momento, no enlaces vivos al perfil). Se le
+// puede enviar a un administrador o a alguien de finanzas, que la
+// revisa en la app o la descarga — no es un folio de cobro.
 export interface Requisicion {
   id: string;
   servicioId: string;
   folio: string;
-  concepto: string;
-  cantidad: number;
+  concepto: string; // resumen: el primer artículo (+ "y N más")
+  cantidad: number; // total de piezas
   notas?: string;
+  departamento?: string;
+  motivo?: string;
+  articulos: ArticuloRequisicion[];
   estado: EstadoRequisicion;
   solicitadoPor: string; // userId
   solicitanteNombre?: string;
+  destinatarioId?: string;
+  destinatarioNombre?: string;
+  enviadaEn?: string;
   aprobadoPor?: string; // userId
   aprobadorNombre?: string;
-  firmaResolucion?: string; // dataURL, copiada al resolver
+  tieneFirmaSolicitante?: boolean;
+  tieneSelloSolicitante?: boolean;
+  tieneFirmaResolucion?: boolean;
+  tieneSelloResolucion?: boolean;
+  // Solo en el detalle (obtenerRequisicion):
+  firmaSolicitante?: string;
+  selloSolicitante?: string;
+  firmaResolucion?: string;
+  selloResolucion?: string;
   motivoRechazo?: string;
   creadoEn: string;
   resueltoEn?: string;
@@ -213,9 +249,56 @@ export interface Requisicion {
 
 export interface NuevaRequisicion {
   servicioId: string;
-  concepto: string;
-  cantidad: number;
-  notas?: string;
+  departamento?: string;
+  motivo?: string;
+  articulos: { cantidad: number; articulo: string; marca?: string; url?: string; imagen?: string }[];
+  destinatarioId?: string;
+  conFirma?: boolean;
+  conSello?: boolean;
+}
+
+// ---------- Cierre de caja conciliado con Getnet ----------
+
+/** Un movimiento del reporte de Getnet ya interpretado. */
+export interface MovimientoGetnet {
+  monto: number; // siempre positivo
+  tipo: "venta" | "cancelacion";
+  autorizacion?: string;
+  hora?: string;
+}
+
+export type EstadoCierre = "aprobado" | "no_aprobado" | "aprobado_con_diferencia";
+
+export interface CierreCaja {
+  id: string;
+  servicioId: string;
+  fecha: string; // YYYY-MM-DD
+  referencia?: string;
+  archivoNombre?: string;
+  totalSistema: number;
+  totalGetnet: number;
+  diferencia: number; // Getnet − sistema
+  movimientosSistema: number;
+  movimientosGetnet: number;
+  detalle: {
+    coinciden?: { folio: string; nombre: string; monto: number; autorizacion?: string; hora?: string }[];
+    soloSistema?: { folio: string; nombre: string; monto: number; hora?: string }[];
+    soloGetnet?: { monto: number; autorizacion?: string; hora?: string }[];
+    cancelaciones?: { monto: number; autorizacion?: string; hora?: string }[];
+  };
+  estado: EstadoCierre;
+  observacion?: string;
+  aprobadorNombre?: string;
+  creadoEn: string;
+  actualizadoEn: string;
+  enviadoEn?: string;
+}
+
+/** vigente: los cobros con tarjeta del sistema siguen siendo los mismos
+ * que cuando se hizo la comparación. */
+export interface CierreCajaConVigencia {
+  cierre: CierreCaja | null;
+  vigente: boolean;
 }
 
 export interface MonthlyRevenuePoint {

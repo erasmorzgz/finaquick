@@ -24,6 +24,7 @@ import type { RequestConUsuario } from "./auth.js";
 import { mandarCorreo, correoConfigurado, escaparHtml } from "./correo.js";
 import { interpretarConIA, narrarResultado, responderChatLibre, estadoIA } from "./asistente.js";
 import * as registro from "./registro.js";
+import { conciliar, type MovimientoGetnet, type MovimientoSistema } from "./conciliacion.js";
 
 export const rutas = Router();
 
@@ -187,6 +188,9 @@ function validarImagenDataUrl(valor: unknown): string | true {
   return true;
 }
 
+// Referencia (afiliación) de Getnet: solo caracteres seguros; vacía la quita.
+const REGEX_REFERENCIA_GETNET = /^[A-Za-z0-9._-]{0,30}$/;
+
 const MONTO_MAXIMO = 99_999_999.99; // el límite real de numeric(10,2) en el esquema
 
 function validarMonto(valor: unknown): string | true {
@@ -226,7 +230,7 @@ function falla(res: Response, status: number, mensaje: string, error?: unknown) 
 
 // ---------- Mapeos fila (snake_case, Postgres) -> objeto (camelCase, app) ----------
 function aOrganizacion(r: any) {
-  return { id: r.id, nombre: r.nombre, colorPrimario: r.color_primario, logoUrl: r.logo_url ?? undefined };
+  return { id: r.id, nombre: r.nombre, colorPrimario: r.color_primario, logoUrl: r.logo_url ?? undefined, encabezadoDocumentos: r.encabezado_documentos ?? undefined };
 }
 function aServicio(r: any) {
   return {
@@ -240,6 +244,7 @@ function aServicio(r: any) {
     cierreCajaLabel: r.cierre_caja_label,
     features: r.features,
     activo: r.activo,
+    referenciaGetnet: r.referencia_getnet ?? undefined,
   };
 }
 function aCategoria(r: any) {
@@ -266,7 +271,25 @@ function aTicket(r: any) {
     fechaPago: r.fecha_pago ?? undefined,
   };
 }
-function aRequisicion(r: any) {
+// La requisición (sin imágenes) con los nombres de quien la pidió, la
+// revisa y la resolvió — para las respuestas de crear, enviar y resolver.
+async function requisicionConNombres(c: any, id: string) {
+  const { rows } = await c.query(
+    `select ${COLUMNAS_REQUISICION_LISTADO}
+     from requisiciones r
+     left join profiles sp on sp.id = r.solicitado_por
+     left join profiles ap on ap.id = r.aprobado_por
+     left join profiles dp on dp.id = r.destinatario_id
+     where r.id = $1`,
+    [id]
+  );
+  return rows[0];
+}
+
+// En el listado no viajan las imágenes (firmas, sellos, fotos de los
+// artículos): pesan mucho y solo el detalle y la impresión las usan.
+function aRequisicion(r: any, completo = false) {
+  const articulos: any[] = Array.isArray(r.articulos) ? r.articulos : [];
   return {
     id: r.id,
     servicioId: r.service_id,
@@ -274,12 +297,29 @@ function aRequisicion(r: any) {
     concepto: r.concepto,
     cantidad: r.cantidad,
     notas: r.notas ?? undefined,
+    departamento: r.departamento ?? undefined,
+    motivo: r.motivo ?? undefined,
+    articulos: completo ? articulos : articulos.map(({ imagen, ...resto }) => ({ ...resto, tieneImagen: !!imagen })),
     estado: r.estado,
     solicitadoPor: r.solicitado_por,
     solicitanteNombre: r.solicitante_nombre ?? undefined,
+    destinatarioId: r.destinatario_id ?? undefined,
+    destinatarioNombre: r.destinatario_nombre ?? undefined,
+    enviadaEn: r.enviada_en ?? undefined,
     aprobadoPor: r.aprobado_por ?? undefined,
     aprobadorNombre: r.aprobador_nombre ?? undefined,
-    firmaResolucion: r.firma_resolucion ?? undefined,
+    tieneFirmaSolicitante: !!r.firma_solicitante,
+    tieneSelloSolicitante: !!r.sello_solicitante,
+    tieneFirmaResolucion: !!r.firma_resolucion,
+    tieneSelloResolucion: !!r.sello_resolucion,
+    ...(completo
+      ? {
+          firmaSolicitante: r.firma_solicitante ?? undefined,
+          selloSolicitante: r.sello_solicitante ?? undefined,
+          firmaResolucion: r.firma_resolucion ?? undefined,
+          selloResolucion: r.sello_resolucion ?? undefined,
+        }
+      : {}),
     motivoRechazo: r.motivo_rechazo ?? undefined,
     creadoEn: r.creado_en,
     resueltoEn: r.resuelto_en ?? undefined,
@@ -297,7 +337,7 @@ function aInvitacion(r: any) {
   };
 }
 function aEvento(r: any) {
-  return { id: r.id, orgId: r.org_id, actorId: r.actor_id, actorNombre: r.actor_nombre, accion: r.accion, detalle: r.detalle, fecha: r.fecha };
+  return { id: r.id, orgId: r.org_id, actorId: r.actor_id, actorNombre: r.actor_nombre, accion: r.accion, detalle: r.detalle, fecha: r.fecha, cursorFecha: r.cursor_fecha };
 }
 function aArchivo(r: any) {
   return {
@@ -351,6 +391,7 @@ async function construirUsuarios(cliente: any, filas: any[]) {
     telefono: f.telefono ?? undefined,
     fotoUrl: f.foto_url ?? undefined,
     firmaUrl: f.firma_url ?? undefined,
+    selloUrl: f.sello_url ?? undefined,
     bio: f.bio ?? undefined,
     rol: f.rol,
     orgIds: miembros.filter((m: any) => m.user_id === f.id).map((m: any) => m.org_id),
@@ -785,12 +826,20 @@ rutas.post("/auth/2fa/confirmar", requerirSesion, async (req: RequestConUsuario,
 });
 
 rutas.post("/auth/2fa/desactivar", requerirSesion, async (req: RequestConUsuario, res) => {
-  const { password } = req.body ?? {};
-  if (typeof password !== "string") return falla(res, 400, "Falta la contraseña.");
+  const { password, reauthToken } = req.body ?? {};
+  if (typeof password !== "string" && typeof reauthToken !== "string") return falla(res, 400, "Confirma tu identidad para continuar.");
   try {
     await conSesionDe(req.usuarioId!, async (c) => {
-      const { rows } = await c.query("select password_hash from profiles where id = $1", [req.usuarioId]);
-      if (rows.length === 0 || !(await verificarPassword(password, rows[0].password_hash))) {
+      const { rows } = await c.query("select password_hash, sesion_valida_desde from profiles where id = $1 for update", [req.usuarioId]);
+      const perfil = rows[0];
+      if (!perfil) throw new Error("CONTRASENA_INCORRECTA");
+      if (typeof reauthToken === "string") {
+        const token = verificarTokenAccion(reauthToken, "2fa_desactivar_microsoft");
+        if (perfil.password_hash !== MARCADOR_SIN_PASSWORD_PROPIA || !token || token.sub !== req.usuarioId ||
+            typeof token.emitidoEnMs !== "number" || token.emitidoEnMs <= new Date(perfil.sesion_valida_desde ?? 0).getTime()) {
+          throw new Error("CONTRASENA_INCORRECTA");
+        }
+      } else if (!(await verificarPassword(password, perfil.password_hash))) {
         throw new Error("CONTRASENA_INCORRECTA");
       }
       // Mismo candado que al activarlo: desactivar 2FA también invalida
@@ -839,6 +888,8 @@ rutas.patch("/usuarios/:id", requerirSesion, async (req: RequestConUsuario, res)
     ["bio", () => validarTexto(cambios.bio, LARGO_MAX_BIO)],
     ["fotoUrl", () => validarImagenDataUrl(cambios.fotoUrl)],
     ["firmaUrl", () => validarImagenDataUrl(cambios.firmaUrl)],
+    // null o "" quita el sello guardado.
+    ["selloUrl", () => (cambios.selloUrl === null || cambios.selloUrl === "" ? true : validarImagenDataUrl(cambios.selloUrl))],
   ] as const) {
     if (cambios[campo] === undefined) continue;
     const resultado = validar();
@@ -855,10 +906,10 @@ rutas.patch("/usuarios/:id", requerirSesion, async (req: RequestConUsuario, res)
       const columnas: string[] = [];
       const valores: any[] = [];
       let i = 1;
-      for (const [campo, columna] of [["nombre", "nombre"], ["telefono", "telefono"], ["fotoUrl", "foto_url"], ["bio", "bio"], ["firmaUrl", "firma_url"]] as const) {
+      for (const [campo, columna] of [["nombre", "nombre"], ["telefono", "telefono"], ["fotoUrl", "foto_url"], ["bio", "bio"], ["firmaUrl", "firma_url"], ["selloUrl", "sello_url"]] as const) {
         if (cambios[campo] !== undefined) {
           columnas.push(`${columna} = $${i++}`);
-          valores.push(cambios[campo]);
+          valores.push(campo === "selloUrl" && cambios[campo] === "" ? null : cambios[campo]);
         }
       }
       // RLS ("cada quien edita su propio perfil": id = usuario_actual()
@@ -1097,7 +1148,7 @@ rutas.get("/servicios", requerirSesion, async (req: RequestConUsuario, res) => {
 rutas.patch("/servicios/:id", requerirSesion, async (req: RequestConUsuario, res) => {
   const mapa: Record<string, string> = {
     nombre: "nombre", icono: "icono", campoPersonaLabel: "campo_persona_label", campoIdLabel: "campo_id_label",
-    campoCategoriaLabel: "campo_categoria_label", cierreCajaLabel: "cierre_caja_label", features: "features", activo: "activo",
+    campoCategoriaLabel: "campo_categoria_label", cierreCajaLabel: "cierre_caja_label", features: "features", activo: "activo", referenciaGetnet: "referencia_getnet",
   };
   for (const campo of ["nombre", "campoPersonaLabel", "campoIdLabel", "campoCategoriaLabel", "cierreCajaLabel"] as const) {
     if (req.body[campo] === undefined) continue;
@@ -1107,6 +1158,9 @@ rutas.patch("/servicios/:id", requerirSesion, async (req: RequestConUsuario, res
   if (req.body.icono !== undefined) {
     const resultado = validarTexto(req.body.icono, LARGO_MAX_TEXTO_CORTO, true);
     if (resultado !== true) return falla(res, 400, resultado);
+  }
+  if (req.body.referenciaGetnet !== undefined && (typeof req.body.referenciaGetnet !== "string" || !REGEX_REFERENCIA_GETNET.test(req.body.referenciaGetnet))) {
+    return falla(res, 400, "La referencia de Getnet solo puede tener letras, números, punto o guion (hasta 30), o quedar vacía.");
   }
   if (req.body.activo !== undefined && typeof req.body.activo !== "boolean") return falla(res, 400, "El campo \"activo\" debe ser verdadero o falso.");
   if (req.body.features !== undefined) {
@@ -1126,7 +1180,7 @@ rutas.patch("/servicios/:id", requerirSesion, async (req: RequestConUsuario, res
       for (const [campo, columna] of Object.entries(mapa)) {
         if (req.body[campo] !== undefined) {
           columnas.push(`${columna} = $${i++}`);
-          valores.push(campo === "features" ? JSON.stringify(req.body[campo]) : req.body[campo]);
+          valores.push(campo === "features" ? JSON.stringify(req.body[campo]) : campo === "referenciaGetnet" ? String(req.body[campo]).trim() || null : req.body[campo]);
         }
       }
       valores.push(req.params.id);
@@ -1700,9 +1754,9 @@ rutas.get("/finanzas/comparativo", requerirSesion, async (req: RequestConUsuario
     const filas = await conSesionDe(req.usuarioId!, async (c) => {
       const servicios = await serviciosDeOrg(c, req.query.orgId as string);
       const tickets = (await ticketsDeOrg(c, req.query.orgId as string)).filter((t: any) => t.estado === "pagado");
-      const meses = Array.from(new Set(tickets.map((t: any) => mesKey(fechaCobro(t))))).sort();
-      const actual = meses[meses.length - 1];
-      const anterior = meses[meses.length - 2];
+      const hoy = new Date();
+      const actual = mesKey(hoy.toISOString());
+      const anterior = mesKey(new Date(hoy.getFullYear(), hoy.getMonth() - 1, 15).toISOString());
       return servicios.map((s: any) => {
         const mesActual = tickets.filter((t: any) => t.servicioId === s.id && mesKey(fechaCobro(t)) === actual).reduce((sum: number, t: any) => sum + t.total, 0);
         const mesAnterior = tickets.filter((t: any) => t.servicioId === s.id && anterior && mesKey(fechaCobro(t)) === anterior).reduce((sum: number, t: any) => sum + t.total, 0);
@@ -1748,12 +1802,13 @@ rutas.get("/organizaciones", requerirSesion, async (req: RequestConUsuario, res)
 const REGEX_COLOR_HEX = /^#[0-9a-fA-F]{6}$/;
 
 rutas.patch("/organizaciones/:id", requerirSesion, async (req: RequestConUsuario, res) => {
-  const mapa: Record<string, string> = { nombre: "nombre", colorPrimario: "color_primario", logoUrl: "logo_url" };
+  const mapa: Record<string, string> = { nombre: "nombre", colorPrimario: "color_primario", logoUrl: "logo_url", encabezadoDocumentos: "encabezado_documentos" };
   const b = req.body ?? {};
   for (const [campo, validar] of [
     ["nombre", () => validarTexto(b.nombre, LARGO_MAX_NOMBRE, true)],
     ["colorPrimario", () => (REGEX_COLOR_HEX.test(b.colorPrimario) ? true : "Ese color no es válido.")],
     ["logoUrl", () => validarImagenDataUrl(b.logoUrl)],
+    ["encabezadoDocumentos", () => validarTexto(b.encabezadoDocumentos, 600)],
   ] as const) {
     if (b[campo] === undefined) continue;
     const resultado = validar();
@@ -1773,7 +1828,7 @@ rutas.patch("/organizaciones/:id", requerirSesion, async (req: RequestConUsuario
       for (const [campo, columna] of Object.entries(mapa)) {
         if (req.body[campo] !== undefined) {
           columnas.push(`${columna} = $${i++}`);
-          valores.push(req.body[campo]);
+          valores.push(campo === "encabezadoDocumentos" ? String(req.body[campo]).trim() || null : req.body[campo]);
         }
       }
       valores.push(req.params.id);
@@ -2022,15 +2077,7 @@ rutas.post("/eventos", requerirSesion, async (req: RequestConUsuario, res) => {
   }
 });
 
-// H11: antes esto traía la bitácora COMPLETA de la organización en una
-// sola consulta — con una institución nueva no se nota, pero después
-// de meses u años de uso real esa lista solo crece, nunca se acota
-// sola. "antesDe" (un ISO, no un número de página) es un cursor real:
-// pedir la fecha del último evento ya mostrado siempre da la
-// siguiente tanda correcta, incluso si mientras tanto se insertaron
-// eventos nuevos más recientes — a diferencia de un offset numérico,
-// que se desincroniza con la lista si algo cambia entre una página y
-// la siguiente.
+// Cursor compuesto: conserva la precisión SQL y desempata por identificador.
 const LIMITE_EVENTOS_DEFAULT = 100;
 const LIMITE_EVENTOS_MAXIMO = 500;
 rutas.get("/eventos", requerirSesion, async (req: RequestConUsuario, res) => {
@@ -2038,23 +2085,32 @@ rutas.get("/eventos", requerirSesion, async (req: RequestConUsuario, res) => {
   // PostgreSQL tal cual y salía como 500.
   const limiteCrudo = Number(req.query.limit);
   const limite = Number.isFinite(limiteCrudo) && limiteCrudo >= 1 ? Math.min(Math.floor(limiteCrudo), LIMITE_EVENTOS_MAXIMO) : LIMITE_EVENTOS_DEFAULT;
-  let antesDe: string | undefined;
-  if (req.query.antesDe !== undefined && req.query.antesDe !== "") {
-    const fecha = typeof req.query.antesDe === "string" ? new Date(req.query.antesDe) : null;
-    if (!fecha || Number.isNaN(fecha.getTime())) return falla(res, 400, "Esa fecha no es válida.");
-    antesDe = fecha.toISOString();
+  // El cursor viaja tal como lo entregó PostgreSQL (microsegundos
+  // incluidos, ver cursor_fecha): pasarlo por un Date de JavaScript
+  // lo recortaría a milisegundos y se perderían eventos.
+  const antesDe = typeof req.query.antesDe === "string" && req.query.antesDe !== "" ? req.query.antesDe : undefined;
+  if (req.query.antesDe !== undefined && req.query.antesDe !== "" && (!antesDe || !Number.isFinite(Date.parse(antesDe)))) {
+    return falla(res, 400, "Esa fecha no es válida.");
+  }
+  const antesId = req.query.antesId;
+  if (antesId !== undefined && antesId !== "" && (typeof antesId !== "string" || !REGEX_UUID.test(antesId) || !antesDe)) {
+    return falla(res, 400, "El identificador del cursor no es válido.");
   }
   try {
     const filas = await conSesionDe(req.usuarioId!, async (c) => {
-      if (antesDe) {
-        const { rows } = await c.query(
-          "select * from eventos_auditoria where org_id = $1 and fecha < $2 order by fecha desc limit $3",
-          [req.query.orgId, antesDe, limite]
-        );
-        return rows;
+      if (antesDe && antesId) {
+        return (await c.query(
+          "select *, fecha::text as cursor_fecha from eventos_auditoria where org_id = $1 and (fecha,id) < ($2::timestamptz,$3::uuid) order by fecha desc,id desc limit $4",
+          [req.query.orgId, antesDe, antesId, limite]
+        )).rows;
       }
-      const { rows } = await c.query("select * from eventos_auditoria where org_id = $1 order by fecha desc limit $2", [req.query.orgId, limite]);
-      return rows;
+      if (antesDe) {
+        return (await c.query(
+          "select *, fecha::text as cursor_fecha from eventos_auditoria where org_id = $1 and fecha < $2::timestamptz order by fecha desc,id desc limit $3",
+          [req.query.orgId, antesDe, limite]
+        )).rows;
+      }
+      return (await c.query("select *, fecha::text as cursor_fecha from eventos_auditoria where org_id = $1 order by fecha desc,id desc limit $2", [req.query.orgId, limite])).rows;
     });
     res.json(filas.map(aEvento));
   } catch (error) {
@@ -2163,6 +2219,78 @@ rutas.get("/estado-asistente", requerirSesion, (_req: RequestConUsuario, res) =>
 });
 
 // ---------- Requisiciones (solicitud interna de compra/material) ----------
+//
+// Formato de "Requisición de compra": departamento, motivo y una lista
+// de artículos (cantidad, artículo, marca, página de internet, imagen),
+// con firma y sello opcionales de quien la solicita. Se puede enviar a
+// un administrador o a alguien de finanzas con acceso al servicio, que
+// la revisa aquí mismo (aprueba/rechaza con su firma y su sello) o
+// descarga el documento.
+
+const MAX_ARTICULOS = 30;
+const LARGO_MAX_IMAGEN_ARTICULO = 100_000; // dataURL ya reducida por el navegador (~70 KB)
+const LARGO_MAX_IMAGENES_TOTAL = 1_200_000;
+const REGEX_IMAGEN_ARTICULO = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+const REGEX_URL_HTTP = /^https?:\/\/[^\s<>"']+$/i;
+
+interface ArticuloRequisicion {
+  cantidad: number;
+  articulo: string;
+  marca?: string;
+  url?: string;
+  imagen?: string;
+}
+
+function validarArticulos(valor: unknown): string | ArticuloRequisicion[] {
+  if (!Array.isArray(valor) || valor.length < 1 || valor.length > MAX_ARTICULOS) {
+    return `La requisición necesita entre 1 y ${MAX_ARTICULOS} artículos.`;
+  }
+  const limpios: ArticuloRequisicion[] = [];
+  let totalImagenes = 0;
+  for (const [i, a] of valor.entries()) {
+    const n = i + 1;
+    if (a === null || typeof a !== "object" || Array.isArray(a)) return `El artículo ${n} no es válido.`;
+    if (!Number.isInteger(a.cantidad) || a.cantidad < 1 || a.cantidad > 100_000) {
+      return `La cantidad del artículo ${n} debe ser un número entero entre 1 y 100,000.`;
+    }
+    const errorArticulo = validarTexto(a.articulo, LARGO_MAX_NOMBRE, true);
+    if (errorArticulo !== true) return `Artículo ${n}: ${errorArticulo}`;
+    const limpio: ArticuloRequisicion = { cantidad: a.cantidad, articulo: a.articulo.trim() };
+    if (a.marca !== undefined && a.marca !== null && a.marca !== "") {
+      const errorMarca = validarTexto(a.marca, 100);
+      if (errorMarca !== true) return `Marca del artículo ${n}: ${errorMarca}`;
+      limpio.marca = a.marca.trim();
+    }
+    if (a.url !== undefined && a.url !== null && a.url !== "") {
+      const errorUrl = validarTexto(a.url, 500);
+      if (errorUrl !== true || !REGEX_URL_HTTP.test(a.url.trim())) return `La página de internet del artículo ${n} debe empezar con http:// o https://.`;
+      limpio.url = a.url.trim();
+    }
+    if (a.imagen !== undefined && a.imagen !== null && a.imagen !== "") {
+      if (typeof a.imagen !== "string" || !REGEX_IMAGEN_ARTICULO.test(a.imagen)) return `La imagen del artículo ${n} no es válida (PNG, JPG, WebP o GIF).`;
+      if (a.imagen.length > LARGO_MAX_IMAGEN_ARTICULO) return `La imagen del artículo ${n} es demasiado grande — usa una más chica.`;
+      totalImagenes += a.imagen.length;
+      limpio.imagen = a.imagen;
+    }
+    limpios.push(limpio);
+  }
+  if (totalImagenes > LARGO_MAX_IMAGENES_TOTAL) return "Las imágenes de la requisición pesan demasiado en conjunto — quita o reduce algunas.";
+  return limpios;
+}
+
+// concepto y cantidad guardan un resumen (lo leen el listado y Quick).
+function resumenDeArticulos(articulos: ArticuloRequisicion[]) {
+  const primero = articulos[0].articulo;
+  const concepto = articulos.length > 1 ? `${primero.slice(0, LARGO_MAX_NOMBRE - 20)} y ${articulos.length - 1} más` : primero;
+  return { concepto, cantidad: articulos.reduce((suma, a) => suma + a.cantidad, 0) };
+}
+
+const COLUMNAS_REQUISICION_LISTADO = `r.id, r.service_id, r.folio, r.concepto, r.cantidad, r.notas, r.departamento, r.motivo,
+  (select coalesce(jsonb_agg((a - 'imagen') || jsonb_build_object('imagen', a ? 'imagen')), '[]'::jsonb) from jsonb_array_elements(r.articulos) a) as articulos,
+  r.estado, r.solicitado_por, r.destinatario_id, r.enviada_en, r.aprobado_por, r.motivo_rechazo, r.creado_en, r.resuelto_en,
+  (r.firma_solicitante is not null) as firma_solicitante, (r.sello_solicitante is not null) as sello_solicitante,
+  (r.firma_resolucion is not null) as firma_resolucion, (r.sello_resolucion is not null) as sello_resolucion,
+  sp.nombre as solicitante_nombre, ap.nombre as aprobador_nombre, dp.nombre as destinatario_nombre`;
 
 rutas.get("/requisiciones", requerirSesion, async (req: RequestConUsuario, res) => {
   const errorServicio = validarUuid(req.query.servicioId, true);
@@ -2170,35 +2298,106 @@ rutas.get("/requisiciones", requerirSesion, async (req: RequestConUsuario, res) 
   try {
     const { rows } = await conSesionDe(req.usuarioId!, (c) =>
       c.query(
-        `select r.*, sp.nombre as solicitante_nombre, ap.nombre as aprobador_nombre
+        `select ${COLUMNAS_REQUISICION_LISTADO}
          from requisiciones r
          left join profiles sp on sp.id = r.solicitado_por
          left join profiles ap on ap.id = r.aprobado_por
+         left join profiles dp on dp.id = r.destinatario_id
          where r.service_id = $1
-         order by r.creado_en desc`,
+         order by r.creado_en desc
+         limit 500`,
         [req.query.servicioId]
       )
     );
-    res.json(rows.map(aRequisicion));
+    res.json(rows.map((r: any) => aRequisicion(r)));
   } catch (error) {
     falla(res, 500, "No se pudieron leer las requisiciones.", error);
   }
 });
 
+// Una requisición completa (con imágenes, firmas y sellos), para verla
+// o imprimirla.
+rutas.get("/requisiciones/:id", requerirSesion, async (req: RequestConUsuario, res) => {
+  try {
+    const { rows } = await conSesionDe(req.usuarioId!, (c) =>
+      c.query(
+        `select r.*, sp.nombre as solicitante_nombre, ap.nombre as aprobador_nombre, dp.nombre as destinatario_nombre
+         from requisiciones r
+         left join profiles sp on sp.id = r.solicitado_por
+         left join profiles ap on ap.id = r.aprobado_por
+         left join profiles dp on dp.id = r.destinatario_id
+         where r.id = $1`,
+        [req.params.id]
+      )
+    );
+    if (rows.length === 0) return falla(res, 404, "Esa requisición no existe, o no tienes acceso a ella.");
+    res.json(aRequisicion(rows[0], true));
+  } catch (error) {
+    falla(res, 500, "No se pudo leer la requisición.", error);
+  }
+});
+
+function avisarRequisicionPorCorreo(destinatario: { correo?: string; nombre?: string } | undefined, folio: string, solicitante: string) {
+  if (!correoConfigurado || !destinatario?.correo) return;
+  mandarCorreo(
+    destinatario.correo,
+    "Te enviaron una requisición para revisar",
+    `<p>Hola ${escaparHtml(destinatario.nombre ?? "")},</p><p>${escaparHtml(solicitante)} te envió la requisición ${escaparHtml(folio)} en Finaquick.</p><p>Entra a la app, en Requisiciones, para revisarla.</p>`
+  ).catch(() => {});
+}
+
 rutas.post("/requisiciones", requerirSesion, async (req: RequestConUsuario, res) => {
   const t = req.body ?? {};
   const errorServicio = validarUuid(t.servicioId, true);
   if (errorServicio !== true) return falla(res, 400, errorServicio);
-  const errorConcepto = validarTexto(t.concepto, LARGO_MAX_NOMBRE, true);
-  if (errorConcepto !== true) return falla(res, 400, errorConcepto);
   const errorNotas = t.notas !== undefined ? validarTexto(t.notas, LARGO_MAX_BIO) : true;
   if (errorNotas !== true) return falla(res, 400, errorNotas);
-  if (!Number.isInteger(t.cantidad) || t.cantidad < 1 || t.cantidad > 100_000) {
-    return falla(res, 400, "La cantidad debe ser un número entero entre 1 y 100,000.");
+  const errorDepartamento = t.departamento !== undefined ? validarTexto(t.departamento, LARGO_MAX_NOMBRE) : true;
+  if (errorDepartamento !== true) return falla(res, 400, errorDepartamento);
+  const errorMotivo = t.motivo !== undefined ? validarTexto(t.motivo, LARGO_MAX_BIO) : true;
+  if (errorMotivo !== true) return falla(res, 400, errorMotivo);
+  for (const bandera of ["conFirma", "conSello"] as const) {
+    if (t[bandera] !== undefined && typeof t[bandera] !== "boolean") return falla(res, 400, `El campo "${bandera}" debe ser verdadero o falso.`);
+  }
+  if (t.destinatarioId !== undefined && t.destinatarioId !== null) {
+    const errorDestinatario = validarUuid(t.destinatarioId, true);
+    if (errorDestinatario !== true) return falla(res, 400, errorDestinatario);
+    if (t.destinatarioId === req.usuarioId) return falla(res, 400, "No puedes enviarte la requisición a ti mismo.");
   }
 
+  // Formato completo (lista de artículos) o el formato simple de antes
+  // (un concepto y una cantidad), que se sigue aceptando.
+  let articulos: ArticuloRequisicion[];
+  if (t.articulos !== undefined) {
+    const resultado = validarArticulos(t.articulos);
+    if (typeof resultado === "string") return falla(res, 400, resultado);
+    articulos = resultado;
+  } else {
+    const errorConcepto = validarTexto(t.concepto, LARGO_MAX_NOMBRE, true);
+    if (errorConcepto !== true) return falla(res, 400, errorConcepto);
+    if (!Number.isInteger(t.cantidad) || t.cantidad < 1 || t.cantidad > 100_000) {
+      return falla(res, 400, "La cantidad debe ser un número entero entre 1 y 100,000.");
+    }
+    articulos = [{ cantidad: t.cantidad, articulo: t.concepto.trim() }];
+  }
+  const resumen = resumenDeArticulos(articulos);
+
   try {
-    const fila = await conSesionDe(req.usuarioId!, async (c) => {
+    const { fila, destinatario, solicitante } = await conSesionDe(req.usuarioId!, async (c) => {
+      // La firma y el sello son los de quien la solicita, leídos de SU
+      // perfil en este momento — nunca imágenes que mande el cliente.
+      // Se guardan como copia, no como enlace vivo.
+      const { rows: perfil } = await c.query("select nombre, firma_url, sello_url from profiles where id = usuario_actual()");
+      if (t.conFirma && !perfil[0]?.firma_url) throw new Error("SIN_FIRMA_GUARDADA");
+      if (t.conSello && !perfil[0]?.sello_url) throw new Error("SIN_SELLO_GUARDADO");
+
+      let destinatarioFila: { correo: string; nombre: string } | undefined;
+      if (t.destinatarioId) {
+        const { rows: valido } = await c.query("select es_destinatario_valido($1, $2) as ok", [t.destinatarioId, t.servicioId]);
+        if (!valido[0]?.ok) throw new Error("DESTINATARIO_INVALIDO");
+        destinatarioFila = (await c.query("select correo, nombre from profiles where id = $1", [t.destinatarioId])).rows[0];
+      }
+
       // Mismo criterio que el folio de un ticket: consecutivo por
       // servicio y día, asignado por el servidor — nunca por el
       // navegador. Prefijo "R" para distinguirlo a simple vista de un
@@ -2209,59 +2408,111 @@ rutas.post("/requisiciones", requerirSesion, async (req: RequestConUsuario, res)
       const folio = `R${dia}-${String(contador[0].n).padStart(4, "0")}`;
 
       // solicitado_por sale siempre de la sesión, nunca del cuerpo de
-      // la petición — mismo motivo que creado_por en tickets: sin
-      // esto, cualquiera con acceso al servicio podría generar una
-      // requisición atribuida a otra persona del equipo.
+      // la petición — mismo motivo que creado_por en tickets.
       const { rows } = await c.query(
-        `insert into requisiciones (service_id, folio, concepto, cantidad, notas, solicitado_por)
-         values ($1,$2,$3,$4,$5,$6)
+        `insert into requisiciones
+           (service_id, folio, concepto, cantidad, notas, departamento, motivo, articulos, solicitado_por,
+            destinatario_id, enviada_en, firma_solicitante, sello_solicitante)
+         values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13)
          returning *`,
-        [t.servicioId, folio, t.concepto, t.cantidad, t.notas ?? null, req.usuarioId]
+        [
+          t.servicioId, folio, resumen.concepto, resumen.cantidad, t.notas ?? null,
+          t.departamento?.trim() || null, t.motivo?.trim() || null, JSON.stringify(articulos), req.usuarioId,
+          t.destinatarioId ?? null, t.destinatarioId ? new Date() : null,
+          t.conFirma ? perfil[0].firma_url : null, t.conSello ? perfil[0].sello_url : null,
+        ]
       );
-      return rows[0];
+      return { fila: await requisicionConNombres(c, rows[0].id), destinatario: destinatarioFila, solicitante: perfil[0]?.nombre as string };
     });
     res.json(aRequisicion(fila));
-  } catch (error) {
+    avisarRequisicionPorCorreo(destinatario, fila.folio, solicitante ?? "Alguien");
+  } catch (error: any) {
+    if (error?.message === "SIN_FIRMA_GUARDADA") return falla(res, 400, "Todavía no tienes una firma guardada — agrégala primero en Mi perfil.");
+    if (error?.message === "SIN_SELLO_GUARDADO") return falla(res, 400, "Todavía no tienes un sello guardado — agrégalo primero en Mi perfil.");
+    if (error?.message === "DESTINATARIO_INVALIDO") return falla(res, 400, "Esa persona no puede recibir la requisición: debe ser administrador, o de finanzas con acceso a este servicio.");
     falla(res, 500, "No se pudo crear la requisición.", error);
+  }
+});
+
+// Enviar (o reenviar) una requisición pendiente a otra persona.
+rutas.patch("/requisiciones/:id/enviar", requerirSesion, async (req: RequestConUsuario, res) => {
+  const errorDestinatario = validarUuid(req.body?.destinatarioId, true);
+  if (errorDestinatario !== true) return falla(res, 400, errorDestinatario);
+  if (req.body.destinatarioId === req.usuarioId) return falla(res, 400, "No puedes enviarte la requisición a ti mismo.");
+  try {
+    const { fila, destinatario, solicitante } = await conSesionDe(req.usuarioId!, async (c) => {
+      const { rows: previa } = await c.query("select service_id from requisiciones where id = $1", [req.params.id]);
+      if (previa.length === 0) throw new Error("NO_ENCONTRADA");
+      const { rows: valido } = await c.query("select es_destinatario_valido($1, $2) as ok", [req.body.destinatarioId, previa[0].service_id]);
+      if (!valido[0]?.ok) throw new Error("DESTINATARIO_INVALIDO");
+      const { rows } = await c.query(
+        `update requisiciones set destinatario_id = $1, enviada_en = now()
+         where id = $2 and estado = 'pendiente' and (solicitado_por = usuario_actual() or es_admin())
+         returning *`,
+        [req.body.destinatarioId, req.params.id]
+      );
+      if (rows.length === 0) throw new Error("NO_SE_PUEDE_ENVIAR");
+      const destinatarioFila = (await c.query("select correo, nombre from profiles where id = $1", [req.body.destinatarioId])).rows[0];
+      const { rows: yo } = await c.query("select nombre from profiles where id = usuario_actual()");
+      return { fila: await requisicionConNombres(c, rows[0].id), destinatario: destinatarioFila, solicitante: yo[0]?.nombre as string };
+    });
+    res.json(aRequisicion(fila));
+    avisarRequisicionPorCorreo(destinatario, fila.folio, solicitante ?? "Alguien");
+  } catch (error: any) {
+    if (error?.message === "NO_ENCONTRADA") return falla(res, 404, "Esa requisición no existe, o no tienes acceso a ella.");
+    if (error?.message === "DESTINATARIO_INVALIDO") return falla(res, 400, "Esa persona no puede recibir la requisición: debe ser administrador, o de finanzas con acceso a este servicio.");
+    if (error?.message === "NO_SE_PUEDE_ENVIAR") return falla(res, 409, "Esta requisición ya no está pendiente, o no es tuya.");
+    falla(res, 500, "No se pudo enviar la requisición.", error);
   }
 });
 
 const MOTIVOS_RESOLUCION_VALIDOS = ["aprobada", "rechazada"] as const;
 
 rutas.patch("/requisiciones/:id", requerirSesion, async (req: RequestConUsuario, res) => {
-  const { estado, conFirma, motivoRechazo } = req.body ?? {};
+  const { estado, conFirma, conSello, motivoRechazo } = req.body ?? {};
   if (!MOTIVOS_RESOLUCION_VALIDOS.includes(estado)) return falla(res, 400, "Ese estado de resolución no es válido.");
   const errorMotivo = motivoRechazo !== undefined ? validarTexto(motivoRechazo, LARGO_MAX_BIO) : true;
   if (errorMotivo !== true) return falla(res, 400, errorMotivo);
+  for (const bandera of ["conFirma", "conSello"] as const) {
+    if (req.body?.[bandera] !== undefined && typeof req.body[bandera] !== "boolean") return falla(res, 400, `El campo "${bandera}" debe ser verdadero o falso.`);
+  }
 
   try {
     const fila = await conSesionDe(req.usuarioId!, async (c) => {
-      // La firma es la del APROBADOR, leída de su propio perfil en
-      // este mismo momento — nunca la que mande el cliente en el
-      // cuerpo de la petición (eso permitiría a cualquiera "firmar"
-      // con la firma de otra persona con solo mandar su dataURL). Se
-      // guarda como copia (firma_resolucion), no como referencia viva,
-      // así que si esa persona cambia su firma después, esta
-      // requisición ya resuelta no cambia de aspecto retroactivamente.
+      // La firma y el sello son los de quien RESUELVE, leídos de su
+      // propio perfil en este mismo momento — nunca los que mande el
+      // cliente en el cuerpo de la petición (eso permitiría a cualquiera
+      // "firmar" con la firma de otra persona con solo mandar su
+      // dataURL). Se guardan como copia (firma_resolucion,
+      // sello_resolucion), no como referencia viva: si esa persona
+      // cambia su firma después, una requisición ya resuelta no cambia
+      // de aspecto retroactivamente.
       let firmaResolucion: string | null = null;
-      if (conFirma) {
-        const { rows: perfil } = await c.query("select firma_url from profiles where id = usuario_actual()");
-        if (!perfil[0]?.firma_url) throw new Error("SIN_FIRMA_GUARDADA");
-        firmaResolucion = perfil[0].firma_url;
+      let selloResolucion: string | null = null;
+      if (conFirma || conSello) {
+        const { rows: perfil } = await c.query("select firma_url, sello_url from profiles where id = usuario_actual()");
+        if (conFirma) {
+          if (!perfil[0]?.firma_url) throw new Error("SIN_FIRMA_GUARDADA");
+          firmaResolucion = perfil[0].firma_url;
+        }
+        if (conSello) {
+          if (!perfil[0]?.sello_url) throw new Error("SIN_SELLO_GUARDADO");
+          selloResolucion = perfil[0].sello_url;
+        }
       }
 
       // Solo se puede resolver una requisición que sigue "pendiente" —
       // mismo candado de un solo sentido que ya usa el pago de un
-      // folio en crédito (ver POST /tickets/:id/pago): evita que dos
-      // administradores resolviéndola casi al mismo tiempo la dejen en
-      // un estado incoherente, o que se "reabra" una ya resuelta.
+      // folio en crédito (ver POST /tickets/:id/pago) — y solo quien es
+      // administrador o la persona a quien se le envió.
       const { rows } = await c.query(
         `update requisiciones
-         set estado = $1, aprobado_por = usuario_actual(), firma_resolucion = coalesce($2, firma_resolucion),
-             motivo_rechazo = $3, resuelto_en = now()
-         where id = $4 and estado = 'pendiente'
+         set estado = $1, aprobado_por = usuario_actual(),
+             firma_resolucion = coalesce($2, firma_resolucion), sello_resolucion = coalesce($3, sello_resolucion),
+             motivo_rechazo = $4, resuelto_en = now()
+         where id = $5 and estado = 'pendiente' and (es_admin() or destinatario_id = usuario_actual())
          returning *`,
-        [estado, firmaResolucion, estado === "rechazada" ? motivoRechazo ?? null : null, req.params.id]
+        [estado, firmaResolucion, selloResolucion, estado === "rechazada" ? motivoRechazo ?? null : null, req.params.id]
       );
       if (rows.length === 0) throw new Error("YA_RESUELTA_O_SIN_PERMISO");
 
@@ -2271,16 +2522,241 @@ rutas.patch("/requisiciones/:id", requerirSesion, async (req: RequestConUsuario,
         estado === "aprobada" ? "Aprobó una requisición" : "Rechazó una requisición",
         `${rows[0].folio} · ${rows[0].concepto}`
       );
-      return rows[0];
+      return await requisicionConNombres(c, rows[0].id);
     });
     res.json(aRequisicion(fila));
   } catch (error: any) {
     if (error?.message === "SIN_FIRMA_GUARDADA") {
       return falla(res, 400, "Todavía no tienes una firma guardada — agrégala primero en Mi perfil.");
     }
+    if (error?.message === "SIN_SELLO_GUARDADO") {
+      return falla(res, 400, "Todavía no tienes un sello guardado — agrégalo primero en Mi perfil.");
+    }
     if (error?.message === "YA_RESUELTA_O_SIN_PERMISO") {
       return falla(res, 409, "Esta requisición ya no está pendiente, o no tienes permiso para resolverla.");
     }
     falla(res, 500, "No se pudo resolver la requisición.", error);
+  }
+});
+
+// ---------- Cierre de caja conciliado con Getnet ----------
+//
+// Compara los cobros con tarjeta que el sistema tiene en un día contra
+// los movimientos del reporte diario de Getnet (que el navegador ya
+// interpretó). El servidor calcula el lado del sistema por su cuenta y
+// hace la comparación; nunca confía en lo que el cliente diga sobre él.
+// Esto detecta errores de captura y cobros que no cuadran — no sustituye
+// una conciliación bancaria (el archivo lo aporta quien lo sube).
+
+const MAX_MOVIMIENTOS_GETNET = 5000;
+const REGEX_FECHA_DIA = /^\d{4}-\d{2}-\d{2}$/;
+const FORMAS_PAGO_TARJETA = ["Tarjeta de débito", "Tarjeta de crédito"];
+
+function fechaDiaValida(valor: unknown): valor is string {
+  if (typeof valor !== "string" || !REGEX_FECHA_DIA.test(valor)) return false;
+  const [a, m, d] = valor.split("-").map(Number);
+  const f = new Date(Date.UTC(a, m - 1, d));
+  return f.getUTCFullYear() === a && f.getUTCMonth() === m - 1 && f.getUTCDate() === d && a >= 2000 && a <= 2100;
+}
+
+function validarMovimientosGetnet(valor: unknown): string | MovimientoGetnet[] {
+  if (!Array.isArray(valor) || valor.length > MAX_MOVIMIENTOS_GETNET) {
+    return `El reporte puede traer hasta ${MAX_MOVIMIENTOS_GETNET.toLocaleString("es-MX")} movimientos.`;
+  }
+  const limpios: MovimientoGetnet[] = [];
+  for (const m of valor) {
+    if (m === null || typeof m !== "object" || Array.isArray(m)) return "Un movimiento del reporte no es válido.";
+    if (typeof m.monto !== "number" || !Number.isFinite(m.monto) || m.monto <= 0 || m.monto > MONTO_MAXIMO) return "Un monto del reporte no es válido.";
+    if (m.tipo !== "venta" && m.tipo !== "cancelacion") return "Un tipo de movimiento del reporte no es válido.";
+    const limpio: MovimientoGetnet = { monto: Math.round(m.monto * 100) / 100, tipo: m.tipo };
+    for (const [campo, largo] of [["autorizacion", 30], ["hora", 20]] as const) {
+      if (m[campo] === undefined || m[campo] === null || m[campo] === "") continue;
+      if (validarTexto(m[campo], largo) !== true) return "Un dato del reporte no es válido.";
+      limpio[campo] = String(m[campo]).trim();
+    }
+    limpios.push(limpio);
+  }
+  return limpios;
+}
+
+function zonaHorariaDelServidor() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+// Cobros con tarjeta del día, con el mismo criterio de "día" que el
+// corte de caja: el de la fecha de pago (o de creación, si nunca fue
+// crédito), en la zona horaria del servidor (ver ZONA_HORARIA).
+async function cobrosConTarjetaDelDia(c: any, servicioId: string, fecha: string): Promise<MovimientoSistema[]> {
+  const zona = zonaHorariaDelServidor();
+  const { rows } = await c.query(
+    `select id, folio, nombre, total,
+            to_char(coalesce(fecha_pago, fecha) at time zone $2, 'HH24:MI') as hora
+     from tickets
+     where service_id = $1 and estado = 'pagado' and forma_pago = any($4)
+       and (coalesce(fecha_pago, fecha) at time zone $2)::date = $3::date
+     order by coalesce(fecha_pago, fecha), folio`,
+    [servicioId, zona, fecha, FORMAS_PAGO_TARJETA]
+  );
+  return rows.map((r: any) => ({ id: r.id, folio: r.folio, nombre: r.nombre, total: Number(r.total), hora: r.hora }));
+}
+
+function aCierre(r: any) {
+  return {
+    id: r.id,
+    servicioId: r.service_id,
+    fecha: r.fecha_texto ?? r.fecha,
+    referencia: r.referencia ?? undefined,
+    archivoNombre: r.archivo_nombre ?? undefined,
+    totalSistema: Number(r.total_sistema),
+    totalGetnet: Number(r.total_getnet),
+    diferencia: Number(r.diferencia),
+    movimientosSistema: r.movimientos_sistema,
+    movimientosGetnet: r.movimientos_getnet,
+    detalle: r.detalle ?? {},
+    estado: r.estado,
+    observacion: r.observacion ?? undefined,
+    aprobadorNombre: r.aprobador_nombre ?? undefined,
+    creadoEn: r.creado_en,
+    actualizadoEn: r.actualizado_en,
+    enviadoEn: r.enviado_en ?? undefined,
+  };
+}
+
+const SELECT_CIERRE = `select cc.*, to_char(cc.fecha, 'YYYY-MM-DD') as fecha_texto, ap.nombre as aprobador_nombre
+  from cierres_caja cc left join profiles ap on ap.id = cc.aprobado_por`;
+
+// ¿Los cobros con tarjeta del sistema siguen siendo los mismos que
+// cuando se hizo la comparación? Si se registró o corrigió un cobro
+// después, la comparación ya no vale y hay que repetirla.
+function sigueVigente(cierre: any, actual: MovimientoSistema[]) {
+  const total = Math.round(actual.reduce((s, m) => s + m.total * 100, 0));
+  return Math.round(Number(cierre.total_sistema) * 100) === total && cierre.movimientos_sistema === actual.length;
+}
+
+rutas.post("/cierres-caja/conciliar", requerirSesion, async (req: RequestConUsuario, res) => {
+  const b = req.body ?? {};
+  const errorServicio = validarUuid(b.servicioId, true);
+  if (errorServicio !== true) return falla(res, 400, errorServicio);
+  if (!fechaDiaValida(b.fecha)) return falla(res, 400, "Esa fecha no es válida.");
+  for (const [campo, largo] of [["referencia", 30], ["archivoNombre", LARGO_MAX_NOMBRE], ["archivoHash", 80]] as const) {
+    if (b[campo] === undefined || b[campo] === null) continue;
+    const resultado = validarTexto(b[campo], largo);
+    if (resultado !== true) return falla(res, 400, resultado);
+  }
+  const movimientos = validarMovimientosGetnet(b.movimientos);
+  if (typeof movimientos === "string") return falla(res, 400, movimientos);
+
+  try {
+    const cierre = await conSesionDe(req.usuarioId!, async (c) => {
+      const { rows: servicio } = await c.query("select org_id, nombre from services where id = $1", [b.servicioId]);
+      if (servicio.length === 0) throw new Error("SERVICIO_INVALIDO");
+      const sistema = await cobrosConTarjetaDelDia(c, b.servicioId, b.fecha);
+      const r = conciliar(sistema, movimientos);
+      const estado = r.cuadra ? "aprobado" : "no_aprobado";
+      const { rows } = await c.query(
+        `insert into cierres_caja
+           (service_id, fecha, referencia, archivo_nombre, archivo_hash, total_sistema, total_getnet, diferencia,
+            movimientos_sistema, movimientos_getnet, detalle, estado, creado_por)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,usuario_actual())
+         on conflict (service_id, fecha) do update set
+           referencia = excluded.referencia, archivo_nombre = excluded.archivo_nombre, archivo_hash = excluded.archivo_hash,
+           total_sistema = excluded.total_sistema, total_getnet = excluded.total_getnet, diferencia = excluded.diferencia,
+           movimientos_sistema = excluded.movimientos_sistema, movimientos_getnet = excluded.movimientos_getnet,
+           detalle = excluded.detalle, estado = excluded.estado, observacion = null, aprobado_por = null,
+           enviado_en = null, actualizado_en = now()
+         returning id`,
+        [
+          b.servicioId, b.fecha, b.referencia?.trim() || null, b.archivoNombre ?? null, b.archivoHash ?? null,
+          r.totalSistema, r.totalGetnet, r.diferencia, r.movimientosSistema, r.movimientosGetnet,
+          JSON.stringify({ coinciden: r.coinciden, soloSistema: r.soloSistema, soloGetnet: r.soloGetnet, cancelaciones: r.cancelaciones }),
+          estado,
+        ]
+      );
+      await registrarEventoAtomico(
+        c, servicio[0].org_id, "Comparó un corte de caja con Getnet",
+        `${servicio[0].nombre} · ${b.fecha} · ${r.cuadra ? "cuadra" : `no cuadra (diferencia ${r.diferencia.toFixed(2)})`}`
+      );
+      return (await c.query(`${SELECT_CIERRE} where cc.id = $1`, [rows[0].id])).rows[0];
+    });
+    res.json({ cierre: aCierre(cierre), vigente: true });
+  } catch (error: any) {
+    if (error?.message === "SERVICIO_INVALIDO") return falla(res, 404, "Ese servicio no existe, o no tienes acceso a él.");
+    if (error?.code === "42501") return falla(res, 403, "Tu acceso a este servicio es de solo consulta — no puedes conciliar el corte de caja.");
+    falla(res, 500, "No se pudo comparar el corte de caja.", error);
+  }
+});
+
+rutas.get("/cierres-caja", requerirSesion, async (req: RequestConUsuario, res) => {
+  const errorServicio = validarUuid(req.query.servicioId, true);
+  if (errorServicio !== true) return falla(res, 400, errorServicio);
+  if (!fechaDiaValida(req.query.fecha)) return falla(res, 400, "Esa fecha no es válida.");
+  try {
+    const resultado = await conSesionDe(req.usuarioId!, async (c) => {
+      const { rows } = await c.query(`${SELECT_CIERRE} where cc.service_id = $1 and cc.fecha = $2::date`, [req.query.servicioId, req.query.fecha]);
+      if (rows.length === 0) return null;
+      const actual = await cobrosConTarjetaDelDia(c, req.query.servicioId as string, req.query.fecha as string);
+      return { cierre: aCierre(rows[0]), vigente: sigueVigente(rows[0], actual) };
+    });
+    res.json(resultado ?? { cierre: null, vigente: false });
+  } catch (error) {
+    falla(res, 500, "No se pudo leer el cierre de caja.", error);
+  }
+});
+
+// Un administrador autoriza un corte que no cuadra, dejando por qué.
+rutas.post("/cierres-caja/:id/aprobar", requerirSesion, async (req: RequestConUsuario, res) => {
+  const observacion = req.body?.observacion;
+  const errorObservacion = validarTexto(observacion, 500, true);
+  if (errorObservacion !== true) return falla(res, 400, errorObservacion);
+  if (observacion.trim().length < 10) return falla(res, 400, "Explica en al menos 10 caracteres por qué se aprueba con diferencia.");
+  try {
+    const cierre = await conSesionDe(req.usuarioId!, async (c) => {
+      if (!(await c.query("select es_admin() as admin")).rows[0]?.admin) throw new Error("SOLO_ADMIN");
+      const { rows: previo } = await c.query("select *, to_char(fecha, 'YYYY-MM-DD') as fecha_texto from cierres_caja where id = $1", [req.params.id]);
+      if (previo.length === 0) throw new Error("NO_ENCONTRADO");
+      if (previo[0].estado !== "no_aprobado") throw new Error("YA_APROBADO");
+      const actual = await cobrosConTarjetaDelDia(c, previo[0].service_id, previo[0].fecha_texto);
+      if (!sigueVigente(previo[0], actual)) throw new Error("DESACTUALIZADO");
+      await c.query(
+        "update cierres_caja set estado = 'aprobado_con_diferencia', observacion = $2, aprobado_por = usuario_actual(), actualizado_en = now() where id = $1",
+        [req.params.id, observacion.trim()]
+      );
+      const { rows: servicio } = await c.query("select org_id, nombre from services where id = $1", [previo[0].service_id]);
+      await registrarEventoAtomico(c, servicio[0].org_id, "Aprobó un corte de caja con diferencia", `${servicio[0].nombre} · ${observacion.trim()}`);
+      return (await c.query(`${SELECT_CIERRE} where cc.id = $1`, [req.params.id])).rows[0];
+    });
+    res.json({ cierre: aCierre(cierre), vigente: true });
+  } catch (error: any) {
+    if (error?.message === "SOLO_ADMIN") return falla(res, 403, "Solo un administrador puede aprobar un corte con diferencia.");
+    if (error?.message === "NO_ENCONTRADO") return falla(res, 404, "Ese cierre no existe, o no tienes acceso a él.");
+    if (error?.message === "YA_APROBADO") return falla(res, 409, "Este corte ya está aprobado.");
+    if (error?.message === "DESACTUALIZADO") return falla(res, 409, "Los cobros con tarjeta cambiaron después de la comparación — súbela de nuevo.");
+    falla(res, 500, "No se pudo aprobar el corte de caja.", error);
+  }
+});
+
+// Marca el corte como enviado, solo si está aprobado y la comparación
+// sigue vigente.
+rutas.post("/cierres-caja/:id/enviado", requerirSesion, async (req: RequestConUsuario, res) => {
+  try {
+    const cierre = await conSesionDe(req.usuarioId!, async (c) => {
+      const { rows: previo } = await c.query("select *, to_char(fecha, 'YYYY-MM-DD') as fecha_texto from cierres_caja where id = $1", [req.params.id]);
+      if (previo.length === 0) throw new Error("NO_ENCONTRADO");
+      if (previo[0].estado === "no_aprobado") throw new Error("NO_APROBADO");
+      const actual = await cobrosConTarjetaDelDia(c, previo[0].service_id, previo[0].fecha_texto);
+      if (!sigueVigente(previo[0], actual)) throw new Error("DESACTUALIZADO");
+      // La política de seguridad filtra el UPDATE a 0 filas (sin error)
+      // para una cuenta de solo consulta.
+      const { rowCount } = await c.query("update cierres_caja set enviado_en = now() where id = $1", [req.params.id]);
+      if (rowCount === 0) throw new Error("SIN_PERMISO");
+      return (await c.query(`${SELECT_CIERRE} where cc.id = $1`, [req.params.id])).rows[0];
+    });
+    res.json({ cierre: aCierre(cierre), vigente: true });
+  } catch (error: any) {
+    if (error?.message === "NO_ENCONTRADO") return falla(res, 404, "Ese cierre no existe, o no tienes acceso a él.");
+    if (error?.message === "NO_APROBADO") return falla(res, 409, "Este corte no está aprobado: no se puede enviar.");
+    if (error?.message === "DESACTUALIZADO") return falla(res, 409, "Los cobros con tarjeta cambiaron después de la comparación — súbela de nuevo.");
+    if (error?.message === "SIN_PERMISO" || error?.code === "42501") return falla(res, 403, "Tu acceso a este servicio es de solo consulta.");
+    falla(res, 500, "No se pudo registrar el envío.", error);
   }
 });

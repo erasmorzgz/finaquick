@@ -72,7 +72,7 @@ export default function ChangePasswordRequired() {
       </form>
 
       <button
-        onClick={logout}
+        onClick={() => { void logout().catch(() => setError("No se pudo cerrar sesión. Inténtalo de nuevo.")); }}
         className="mt-6 flex w-full items-center justify-center gap-1.5 text-center text-sm font-semibold text-[var(--color-text-secondary)] hover:underline"
       >
         <LogOut size={14} /> Cerrar sesión

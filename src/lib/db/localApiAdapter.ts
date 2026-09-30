@@ -12,6 +12,8 @@ import type {
   Invitacion,
   MonthlyRevenuePoint,
   NuevaRequisicion,
+  MovimientoGetnet,
+  CierreCajaConVigencia,
   NuevoTicket,
   Organization,
   Procedimiento,
@@ -59,7 +61,10 @@ async function pedir<T>(ruta: string, opciones: RequestInit = {}): Promise<T> {
       ...(opciones.headers ?? {}),
     },
   });
-  const cuerpo = await res.json().catch(() => ({}));
+  const cuerpo = await res.json().catch(() => {
+    if (res.ok) throw new TypeError("La respuesta está incompleta. Confirma el resultado antes de repetir la operación.");
+    return {};
+  });
   if (!res.ok) throw new ErrorApi(cuerpo.error ?? "Ocurrió un error inesperado.", res.status);
   return cuerpo as T;
 }
@@ -114,14 +119,14 @@ export async function confirmar2FA(codigo: string): Promise<void> {
   await pedir("/auth/2fa/confirmar", { method: "POST", body: JSON.stringify({ codigo }) });
 }
 
-export async function desactivar2FA(password: string): Promise<void> {
-  await pedir("/auth/2fa/desactivar", { method: "POST", body: JSON.stringify({ password }) });
+export async function desactivar2FA(credencial: string | { reauthToken: string }): Promise<void> {
+  await pedir("/auth/2fa/desactivar", { method: "POST", body: JSON.stringify(typeof credencial === "string" ? { password: credencial } : credencial) });
 }
 
 export async function cerrarSesion(): Promise<void> {
   // La cookie es httpOnly — no hay nada que borrar del lado del
   // navegador con JS, hay que pedírselo al servidor.
-  await pedir("/auth/logout", { method: "POST" }).catch(() => {});
+  await pedir("/auth/logout", { method: "POST" });
 }
 
 export async function cambiarPassword(_correo: string, actual: string, nueva: string): Promise<void> {
@@ -344,13 +349,13 @@ export async function registrarEvento(orgId: string, actorId: string, actorNombr
   await pedir("/eventos", { method: "POST", body: JSON.stringify({ orgId, actorId, actorNombre, accion, detalle }) });
 }
 
-// "antesDe" (un ISO de un evento ya mostrado) es un cursor para pedir
+// "antesDe" conserva cursorFecha y "antesId" desempata eventos para pedir
 // la siguiente tanda de eventos más viejos — no un número de página,
 // que se desincroniza si mientras tanto se insertaron eventos nuevos.
 // Opcional, para no romper otros llamadores que solo quieren la
 // primera tanda (la más reciente).
-export async function listarEventos(orgId: string, opciones?: { limit?: number; antesDe?: string }): Promise<EventoAuditoria[]> {
-  return pedir(`/eventos${qs({ orgId, limit: opciones?.limit?.toString(), antesDe: opciones?.antesDe })}`);
+export async function listarEventos(orgId: string, opciones?: { limit?: number; antesDe?: string; antesId?: string }): Promise<EventoAuditoria[]> {
+  return pedir(`/eventos${qs({ orgId, limit: opciones?.limit?.toString(), antesDe: opciones?.antesDe, antesId: opciones?.antesId })}`);
 }
 
 // ---------- Búsqueda de folios entre servicios ----------
@@ -362,8 +367,7 @@ export async function buscarFolioGlobal(orgId: string, query: string): Promise<(
 
 // ---------- Búsqueda en lenguaje natural (opcional, ver asistente.ts) ----------
 // No usa pedir(): un 204 (sin IA configurada, o el proveedor falló) no
-// trae cuerpo JSON — pedir() lo confundiría con {} en vez de "no hay
-// respuesta". Nunca lanza: cualquier problema de red también cae en
+// trae cuerpo JSON — pedir() rechazaría la respuesta incompleta. Nunca lanza: cualquier problema de red también cae en
 // null, para que quien llama use la búsqueda por patrones sin más.
 export async function interpretarConsultaIA(texto: string, historial: string[] = []): Promise<Consulta | null> {
   try {
@@ -446,16 +450,52 @@ export async function crearRequisicion(requisicion: NuevaRequisicion): Promise<R
   return pedir("/requisiciones", { method: "POST", body: JSON.stringify(requisicion) });
 }
 
-// conFirma: true estampa la firma YA guardada de quien resuelve (se
-// lee del lado del servidor, de su propio perfil) — nunca se manda
-// ninguna imagen de firma en esta llamada.
+// Una requisición completa (con imágenes, firmas y sellos), para verla
+// o imprimirla; el listado no las trae.
+export async function obtenerRequisicion(id: string): Promise<Requisicion> {
+  return pedir(`/requisiciones/${encodeURIComponent(id)}`);
+}
+
+// Enviar (o reenviar) una requisición pendiente a un administrador o a
+// alguien de finanzas con acceso al servicio.
+export async function enviarRequisicion(id: string, destinatarioId: string): Promise<Requisicion> {
+  return pedir(`/requisiciones/${encodeURIComponent(id)}/enviar`, { method: "PATCH", body: JSON.stringify({ destinatarioId }) });
+}
+
+// conFirma / conSello: true estampa la firma y el sello YA guardados de
+// quien resuelve (se leen del lado del servidor, de su propio perfil) —
+// nunca se manda ninguna imagen en esta llamada.
 export async function resolverRequisicion(
   id: string,
   estado: Extract<EstadoRequisicion, "aprobada" | "rechazada">,
-  opciones?: { conFirma?: boolean; motivoRechazo?: string }
+  opciones?: { conFirma?: boolean; conSello?: boolean; motivoRechazo?: string }
 ): Promise<Requisicion> {
   return pedir(`/requisiciones/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    body: JSON.stringify({ estado, conFirma: opciones?.conFirma, motivoRechazo: opciones?.motivoRechazo }),
+    body: JSON.stringify({ estado, conFirma: opciones?.conFirma, conSello: opciones?.conSello, motivoRechazo: opciones?.motivoRechazo }),
   });
+}
+
+// ---------- Cierre de caja conciliado con Getnet ----------
+export async function obtenerCierreCaja(servicioId: string, fecha: string): Promise<CierreCajaConVigencia> {
+  return pedir(`/cierres-caja${qs({ servicioId, fecha })}`);
+}
+
+export async function conciliarCierreCaja(datos: {
+  servicioId: string;
+  fecha: string;
+  referencia?: string;
+  archivoNombre?: string;
+  archivoHash?: string;
+  movimientos: MovimientoGetnet[];
+}): Promise<CierreCajaConVigencia> {
+  return pedir("/cierres-caja/conciliar", { method: "POST", body: JSON.stringify(datos) });
+}
+
+export async function aprobarCierreConDiferencia(id: string, observacion: string): Promise<CierreCajaConVigencia> {
+  return pedir(`/cierres-caja/${encodeURIComponent(id)}/aprobar`, { method: "POST", body: JSON.stringify({ observacion }) });
+}
+
+export async function marcarCierreEnviado(id: string): Promise<CierreCajaConVigencia> {
+  return pedir(`/cierres-caja/${encodeURIComponent(id)}/enviado`, { method: "POST" });
 }

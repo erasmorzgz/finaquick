@@ -6,7 +6,6 @@ import {
   useReducedMotion,
 } from "motion/react";
 import {
-  cloneElement,
   type ComponentPropsWithRef,
   createContext,
   type ReactElement,
@@ -79,12 +78,20 @@ export interface MessageBubbleCollapsibleProps
   children?: ReactNode;
 }
 
-function mergeRefs<T>(...refs: Array<Ref<T> | undefined>) {
+function mergeElementRefs<T>(element: ReactElement<{ ref?: Ref<T> }>, forwarded: Ref<T> | undefined) {
   return (node: T | null) => {
-    for (const ref of refs) {
-      if (typeof ref === "function") ref(node);
-      else if (ref) ref.current = node;
-    }
+    const cleanups = [element.props.ref, forwarded].map((target) => {
+      if (typeof target === "function") {
+        const cleanup = target(node);
+        return typeof cleanup === "function" ? cleanup : () => { target(null); };
+      }
+      if (target) {
+        target.current = node;
+        return () => { target.current = null; };
+      }
+      return () => {};
+    });
+    return () => { cleanups.forEach((cleanup) => cleanup()); };
   };
 }
 
@@ -185,6 +192,10 @@ export function MessageBubbleContent({
   ref,
   ...props
 }: MessageBubbleContentProps) {
+  const composedRef = useCallback((node: HTMLElement | null) => {
+    if (!render) return;
+    return mergeElementRefs(render as ReactElement<{ ref?: Ref<HTMLElement> }>, ref as Ref<HTMLElement> | undefined)(node);
+  }, [render, ref]);
   const reduce = useReducedMotion() ?? false;
   const { align = "start", animateIn, variant } =
     useContext(MessageBubbleContext);
@@ -250,13 +261,11 @@ export function MessageBubbleContent({
       Record<string, unknown> & { className?: string; ref?: Ref<HTMLElement> }
     >;
 
-    return cloneElement(child, {
-      ...props,
-      ref: mergeRefs(child.props.ref, ref as Ref<HTMLElement> | undefined),
-      className: cn(classes, child.props.className),
-      children: composedChildren,
-      "data-slot": "message-bubble-content",
-    });
+    const Element = child.type;
+    return <Element {...child.props} {...props} key={child.key} ref={composedRef}
+      className={cn(classes, child.props.className)} data-slot="message-bubble-content">
+      {composedChildren}
+    </Element>;
   }
 
   return (

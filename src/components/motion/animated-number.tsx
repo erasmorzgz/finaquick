@@ -35,7 +35,6 @@ export function AnimatedNumber({
     if (startOnView && !inView) return;
     if (reduce) {
       fromRef.current = value;
-      setDisplay(value);
       return;
     }
     const controls = animate(fromRef.current, value, {
@@ -49,7 +48,7 @@ export function AnimatedNumber({
 
   return (
     <span ref={ref} className={cn("tabular-nums", className)}>
-      {format(display)}
+      {format(reduce ? value : display)}
     </span>
   );
 }

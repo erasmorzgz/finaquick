@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Sparkles, Receipt, Banknote, CreditCard, ClipboardList, TrendingUp, ArrowRight, ArrowUpRight, ArrowDownRight, Minus, Wallet, UserRound, Download, SendHorizontal, TriangleAlert } from "lucide-react";
 import { MessageBubble, MessageBubbleContent } from "@/components/chat/message-bubble";
@@ -627,21 +627,19 @@ function descargarDigesto(d: Record<string, unknown>) {
 // sin IA configurada, entiende un buen puñado de patrones comunes por
 // su cuenta (src/lib/smartSearch.ts), sin memoria de conversación —
 // para cualquier otra cosa, cae de vuelta a buscar por folio o nombre.
-export function SmartSearchModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SmartSearchModal({ open, onClose: cerrar }: { open: boolean; onClose: () => void }) {
   const { servicioActual } = useService();
   const { org } = useOrg();
   const { effectiveRole } = useAuth();
   const navigate = useNavigate();
   const [texto, setTexto] = useState("");
+  const onClose = useCallback(() => { setTexto(""); cerrar(); }, [cerrar]);
   const [mensajes, setMensajes] = useState<Mensaje[]>([]);
   const [estadoIA, setEstadoIA] = useState<EstadoAsistente | null>(null);
   const finRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) {
-      setTexto("");
-      return;
-    }
+    if (!open) return;
     db.estadoAsistente().then(setEstadoIA);
   }, [open]);
 
