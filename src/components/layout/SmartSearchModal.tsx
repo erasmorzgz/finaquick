@@ -13,7 +13,7 @@ import { useOrg } from "../../lib/theme/OrgContext";
 import * as db from "../../lib/db";
 import type { EstadoAsistente, Procedimiento, Requisicion, Ticket } from "../../lib/db/types";
 import { fechaEfectiva, fechaLocal, mesLocal } from "../../lib/fechaFolio";
-import { interpretarConsulta, esSaludo, type Consulta } from "../../lib/smartSearch";
+import { interpretarConsulta, esSaludo, LARGO_MAX_CONSULTA, type Consulta } from "../../lib/smartSearch";
 import { formatoMXN, generarCSV, descargarTexto } from "../../lib/utils";
 import type { Grafica, PuntoGrafica } from "./QuickChart";
 
@@ -886,6 +886,7 @@ export function SmartSearchModal({ open, onClose }: { open: boolean; onClose: ()
         >
           <input
             className="min-w-0 flex-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 text-sm text-[var(--color-text-primary)] outline-none focus:border-brand-400"
+            maxLength={LARGO_MAX_CONSULTA}
             placeholder={servicioActual ? "Escribe tu pregunta…" : "Elige un servicio para preguntar"}
             value={texto}
             onChange={(e) => setTexto(e.target.value)}
@@ -934,7 +935,7 @@ function AvisoIA({ estado, esAdmin }: { estado: EstadoAsistente | null; esAdmin:
           : "mb-3 flex gap-2.5 rounded-xl bg-[color:var(--color-warning)]/15 px-3.5 py-2.5 text-xs text-[var(--color-text-primary)]"
       }
     >
-      <TriangleAlert size={15} className={esError ? "mt-px flex-shrink-0 text-[color:var(--color-critical)]" : "mt-px flex-shrink-0 text-amber-700 dark:text-amber-400"} />
+      <TriangleAlert size={15} className={esError ? "mt-px flex-shrink-0 text-[color:var(--color-critical-text)]" : "mt-px flex-shrink-0 text-amber-700 dark:text-amber-400"} />
       <div>
         <p className="font-bold">
           {esError ? "La IA no respondió — contesté en modo básico" : "Modo básico: sin IA conectada"}
@@ -1152,11 +1153,11 @@ function RespuestaAsistente({
           {comp.deltaPct === null ? (
             <span className="flex items-center gap-1 text-xs font-bold text-[var(--color-text-muted)]"><Minus size={12} /> —</span>
           ) : subiendo ? (
-            <span className="flex items-center gap-0.5 rounded-full bg-[color:var(--color-good)]/10 px-2 py-1 text-xs font-bold text-[color:var(--color-good)]">
+            <span className="flex items-center gap-0.5 rounded-full bg-[color:var(--color-good)]/10 px-2 py-1 text-xs font-bold text-[color:var(--color-good-text)]">
               <ArrowUpRight size={13} /> {comp.deltaPct.toFixed(0)}%
             </span>
           ) : (
-            <span className="flex items-center gap-0.5 rounded-full bg-[color:var(--color-critical)]/10 px-2 py-1 text-xs font-bold text-[color:var(--color-critical)]">
+            <span className="flex items-center gap-0.5 rounded-full bg-[color:var(--color-critical)]/10 px-2 py-1 text-xs font-bold text-[color:var(--color-critical-text)]">
               <ArrowDownRight size={13} /> {comp.deltaPct.toFixed(0)}%
             </span>
           )}

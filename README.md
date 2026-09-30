@@ -7,8 +7,10 @@ con el desempeño de cada servicio y cada procedimiento.
 
 ## Funciones principales
 
-- **Multi-organización**: cada campus o sede opera de forma aislada, con
-  sus propios servicios, usuarios y datos, sin mezclarse entre sí.
+- **Multi-organización**: cada campus o sede tiene sus propios servicios,
+  usuarios y datos, y las cuentas de finanzas y de personal solo ven lo de
+  su organización. El rol de administrador es de toda la institución (ver
+  `SECURITY.md`): quien administra un campus administra todos.
 - **Roles y permisos**: administrador, finanzas, personal, y acceso de
   solo consulta por servicio.
 - **Folios y cobros**: registro de procedimientos, pagos y créditos

@@ -8,6 +8,8 @@ import { conSesionDe, pool } from "./db.js";
 import {
   hashPassword,
   verificarPassword,
+  gastarTiempoDeVerificacion,
+  passwordBienFormada,
   firmarSesion,
   requerirSesion,
   ponerCookieSesion,
@@ -25,6 +27,26 @@ import * as registro from "./registro.js";
 
 export const rutas = Router();
 
+// Identificadores en la URL: todo ":id" de esta API es un UUID, y todo
+// "orgId"/"servicioId" en la query también. Se validan aquí, una sola
+// vez, para TODAS las rutas — antes solo 6 de ~30 lo hacían, y en las
+// demás un id mal formado llegaba a PostgreSQL y salía como un 500
+// ("No se pudieron leer los folios") en vez de un 400 claro. Un
+// arreglo (?orgId=a&orgId=b) o un objeto (?orgId[x]=a) tampoco es un
+// UUID y también se rechaza.
+rutas.param("id", (_req, res, next, id) => {
+  const resultado = validarUuid(id, true);
+  if (resultado !== true) return falla(res, 400, resultado);
+  next();
+});
+rutas.use((req, res, next) => {
+  for (const clave of ["orgId", "servicioId"] as const) {
+    const resultado = validarUuid(req.query[clave]);
+    if (resultado !== true) return falla(res, 400, resultado);
+  }
+  next();
+});
+
 const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:5173";
 
 const REGEX_CORREO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -34,9 +56,30 @@ const LARGO_MIN_PASSWORD = 8;
  * llamando la API directo — sin esto, cualquiera podría registrar una
  * cuenta con "123" de contraseña vía una petición HTTP a mano. */
 function validarCredenciales(correo: unknown, password: unknown): string | null {
-  if (typeof correo !== "string" || !REGEX_CORREO.test(correo.trim())) return "Ese correo no es válido.";
+  if (typeof correo !== "string" || !correoValido(correo)) return "Ese correo no es válido.";
+  return errorDePasswordNueva(password);
+}
+
+// 254 es el máximo real de una dirección de correo (RFC 5321).
+function correoValido(correo: string): boolean {
+  const c = correo.trim();
+  return c.length <= 254 && REGEX_CORREO.test(c) && !c.includes("\u0000");
+}
+
+// bcrypt solo usa los primeros 72 bytes de la contraseña: el resto se
+// ignora en silencio, así que una frase de 100 caracteres protegía lo
+// mismo que sus primeros 72 sin que quien la escribió lo supiera. Se
+// rechaza al ELEGIR una contraseña, con un mensaje claro; las cuentas
+// que ya tenían una más larga siguen pudiendo iniciar sesión igual.
+const LARGO_MAX_PASSWORD_BYTES = 72;
+
+function errorDePasswordNueva(password: unknown, sujeto = "La contraseña"): string | null {
   if (typeof password !== "string" || password.length < LARGO_MIN_PASSWORD) {
-    return `La contraseña debe tener al menos ${LARGO_MIN_PASSWORD} caracteres.`;
+    return `${sujeto} debe tener al menos ${LARGO_MIN_PASSWORD} caracteres.`;
+  }
+  if (!passwordBienFormada(password)) return `${sujeto} tiene caracteres que no se pueden guardar.`;
+  if (Buffer.byteLength(password, "utf8") > LARGO_MAX_PASSWORD_BYTES) {
+    return `${sujeto} no puede pasar de ${LARGO_MAX_PASSWORD_BYTES} bytes (unos 72 caracteres; los acentos y símbolos cuentan doble).`;
   }
   return null;
 }
@@ -105,6 +148,9 @@ const ACCIONES_RESERVADAS_AL_SERVIDOR = new Set(
 
 function validarTexto(valor: unknown, maxLargo: number, requerido = false): string | true {
   if (typeof valor !== "string") return "Ese campo no es válido.";
+  // PostgreSQL no puede guardar el carácter NUL (\u0000) en un texto:
+  // llegaba hasta la base de datos y salía como un 500.
+  if (valor.includes("\u0000")) return "Ese campo tiene caracteres que no se pueden guardar.";
   if (requerido && valor.trim().length === 0) return "Ese campo no puede quedar vacío.";
   if (valor.length > maxLargo) return `Ese campo no puede tener más de ${maxLargo} caracteres.`;
   return true;
@@ -120,6 +166,17 @@ const REGEX_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 function validarUuid(valor: unknown, requerido = false): string | true {
   if (valor === undefined) return requerido ? "Falta un identificador." : true;
   if (typeof valor !== "string" || !REGEX_UUID.test(valor)) return "Ese identificador no es válido.";
+  return true;
+}
+
+/** Una lista de identificadores (organizaciones, servicios...) — que sea
+ * de verdad un arreglo de UUID, no un texto o un objeto que reviente
+ * más adelante, y de tamaño acotado. */
+function validarListaUuid(valor: unknown, max = 500): string | true {
+  if (!Array.isArray(valor) || valor.length > max) return "Esa lista de identificadores no es válida.";
+  for (const v of valor) {
+    if (typeof v !== "string" || !REGEX_UUID.test(v)) return "Esa lista de identificadores no es válida.";
+  }
   return true;
 }
 
@@ -139,7 +196,30 @@ function validarMonto(valor: unknown): string | true {
   return true;
 }
 
+// Errores de PostgreSQL que en realidad son "el dato que mandó quien
+// llamó no sirve" (un identificador mal formado, un texto con un byte
+// inválido, una fecha fuera de rango, una referencia que no existe...),
+// no un fallo del servidor. Las rutas validan lo que pueden con
+// mensajes específicos; esto es la red de seguridad para lo que se les
+// escape: responde 400/403 en vez de un 500 que además ensucia el
+// registro de errores reales y le hace creer a quien administra que
+// algo se rompió.
+function traducirErrorDeDatos(error: any): { status: number; mensaje: string } | null {
+  const codigo = typeof error?.code === "string" ? error.code : "";
+  if (codigo.startsWith("22")) return { status: 400, mensaje: "Alguno de los datos enviados no tiene un formato válido." };
+  if (codigo === "23502") return { status: 400, mensaje: "Falta un dato requerido." };
+  if (codigo === "23503") return { status: 400, mensaje: "Uno de los elementos indicados ya no existe." };
+  if (codigo === "23514") return { status: 400, mensaje: "Alguno de los datos no cumple las reglas permitidas." };
+  if (codigo === "42501") return { status: 403, mensaje: "No tienes permiso para esta acción." };
+  return null;
+}
+
 function falla(res: Response, status: number, mensaje: string, error?: unknown) {
+  const traducido = status === 500 && error ? traducirErrorDeDatos(error) : null;
+  if (traducido) {
+    registro.info(`${mensaje} — dato rechazado por la base de datos (${(error as any).code}): ${(error as any).message}`);
+    return res.status(traducido.status).json({ error: traducido.mensaje });
+  }
   if (error) registro.error(mensaje, error);
   res.status(status).json({ error: mensaje });
 }
@@ -387,7 +467,12 @@ rutas.post("/auth/login", async (req, res) => {
     // resto del perfil) en vez de una consulta directa que RLS
     // bloquearía entera.
     const { rows } = await pool.query("select * from obtener_credenciales_login($1)", [correo]);
-    if (rows.length === 0) return falla(res, 401, "Contraseña incorrecta o la cuenta no existe.");
+    if (rows.length === 0) {
+      // Misma espera que con una cuenta real, para que el tiempo de
+      // respuesta no delate qué correos existen (ver auth.ts).
+      await gastarTiempoDeVerificacion(password);
+      return falla(res, 401, "Contraseña incorrecta o la cuenta no existe.");
+    }
 
     if (rows[0].bloqueado_hasta && new Date(rows[0].bloqueado_hasta) > new Date()) {
       return falla(res, 429, "Cuenta bloqueada temporalmente por varios intentos fallidos — espera unos minutos y vuelve a intentar.");
@@ -395,9 +480,11 @@ rutas.post("/auth/login", async (req, res) => {
 
     const ok = await verificarPassword(password, rows[0].password_hash);
     if (!ok) {
-      // No se espera la respuesta — que el registro del intento fallido
-      // sea lento no debe hacer más lento el "contraseña incorrecta".
-      pool.query("select registrar_intento_fallido($1)", [correo]).catch(() => {});
+      // Se espera a que el intento quede registrado antes de responder:
+      // si no, un intento siguiente y rápido puede leer el contador
+      // sin contarlo y el bloqueo por intentos se salta con solicitudes
+      // en ráfaga. Un fallo al registrar no cambia la respuesta.
+      await pool.query("select registrar_intento_fallido($1)", [correo]).catch((e) => registro.error("No se pudo registrar el intento fallido", e));
       return falla(res, 401, "Contraseña incorrecta o la cuenta no existe.");
     }
 
@@ -457,7 +544,9 @@ rutas.post("/auth/login/2fa", async (req, res) => {
     }
     const { valid: valido } = await verificarTotp({ secret: descifrarTotp(rows[0].totp_secret), token: codigo });
     if (!valido) {
-      pool.query("select registrar_intento_fallido_por_id($1)", [payload.sub]).catch(() => {});
+      // Igual que en el login: se espera el registro para que el
+      // bloqueo cuente los intentos hechos en ráfaga.
+      await pool.query("select registrar_intento_fallido_por_id($1)", [payload.sub]).catch((e) => registro.error("No se pudo registrar el intento fallido", e));
       return falla(res, 401, "Código incorrecto.");
     }
     await pool.query("select registrar_login_exitoso_por_id($1)", [payload.sub]);
@@ -534,9 +623,8 @@ rutas.post("/auth/olvide-password", async (req, res) => {
 
 rutas.post("/auth/restablecer-password-con-token", async (req, res) => {
   const { token, password } = req.body ?? {};
-  if (typeof password !== "string" || password.length < LARGO_MIN_PASSWORD) {
-    return falla(res, 400, `La contraseña debe tener al menos ${LARGO_MIN_PASSWORD} caracteres.`);
-  }
+  const errorPassword = errorDePasswordNueva(password);
+  if (errorPassword) return falla(res, 400, errorPassword);
   const payload = typeof token === "string" ? verificarTokenAccion(token, "restablecer_password") : null;
   if (!payload) return falla(res, 400, "Este enlace no es válido o ya venció.");
   try {
@@ -555,9 +643,8 @@ rutas.post("/auth/restablecer-password-con-token", async (req, res) => {
 
 rutas.post("/auth/cambiar-password", requerirSesion, async (req: RequestConUsuario, res) => {
   const { actual, nueva } = req.body ?? {};
-  if (typeof nueva !== "string" || nueva.length < LARGO_MIN_PASSWORD) {
-    return falla(res, 400, `La contraseña nueva debe tener al menos ${LARGO_MIN_PASSWORD} caracteres.`);
-  }
+  const errorNueva = errorDePasswordNueva(nueva, "La contraseña nueva");
+  if (errorNueva) return falla(res, 400, errorNueva);
   try {
     await conSesionDe(req.usuarioId!, async (c) => {
       const { rows } = await c.query("select password_hash from profiles where id = $1", [req.usuarioId]);
@@ -757,6 +844,11 @@ rutas.patch("/usuarios/:id", requerirSesion, async (req: RequestConUsuario, res)
     const resultado = validar();
     if (resultado !== true) return falla(res, 400, resultado);
   }
+  for (const campo of ["orgIds", "servicioIds", "serviciosSoloConsulta"] as const) {
+    if (cambios[campo] === undefined) continue;
+    const resultado = validarListaUuid(cambios[campo]);
+    if (resultado !== true) return falla(res, 400, resultado);
+  }
 
   try {
     await conSesionDe(req.usuarioId!, async (c) => {
@@ -924,8 +1016,14 @@ rutas.post("/usuarios/:id/restablecer-password", requerirSesion, async (req: Req
 rutas.post("/invitaciones", requerirSesion, async (req: RequestConUsuario, res) => {
   const { correo: correoCrudo, orgId, rol, servicioIds } = req.body ?? {};
   const correo = String(correoCrudo ?? "").trim();
-  if (!REGEX_CORREO.test(correo)) return falla(res, 400, "Ese correo no es válido.");
+  if (!correoValido(correo)) return falla(res, 400, "Ese correo no es válido.");
   if (!["admin", "finanzas", "personal"].includes(rol)) return falla(res, 400, "Ese rol no es válido.");
+  const errorOrgInvitacion = validarUuid(orgId, true);
+  if (errorOrgInvitacion !== true) return falla(res, 400, errorOrgInvitacion);
+  if (servicioIds !== undefined) {
+    const errorServicios = validarListaUuid(servicioIds);
+    if (errorServicios !== true) return falla(res, 400, errorServicios);
+  }
   try {
     // El código de invitación (no el correo) es lo que de verdad
     // demuestra que quien se registra es a quien el administrador le
@@ -1006,6 +1104,20 @@ rutas.patch("/servicios/:id", requerirSesion, async (req: RequestConUsuario, res
     const resultado = validarTexto(req.body[campo], LARGO_MAX_NOMBRE, campo === "nombre");
     if (resultado !== true) return falla(res, 400, resultado);
   }
+  if (req.body.icono !== undefined) {
+    const resultado = validarTexto(req.body.icono, LARGO_MAX_TEXTO_CORTO, true);
+    if (resultado !== true) return falla(res, 400, resultado);
+  }
+  if (req.body.activo !== undefined && typeof req.body.activo !== "boolean") return falla(res, 400, "El campo \"activo\" debe ser verdadero o falso.");
+  if (req.body.features !== undefined) {
+    const f = req.body.features;
+    const valido =
+      f !== null && typeof f === "object" && !Array.isArray(f) &&
+      Object.keys(f).length <= 20 &&
+      Object.entries(f).every(([k, v]) => k.length <= 40 && typeof v === "boolean");
+    if (!valido) return falla(res, 400, "Las funciones del servicio no son válidas.");
+  }
+  if (!Object.keys(mapa).some((campo) => req.body[campo] !== undefined)) return falla(res, 400, "No hay ningún cambio que guardar.");
   try {
     const fila = await conSesionDe(req.usuarioId!, async (c) => {
       const columnas: string[] = [];
@@ -1037,6 +1149,10 @@ rutas.post("/servicios", requerirSesion, async (req: RequestConUsuario, res) => 
   const { nombre, icono, orgId } = req.body ?? {};
   const errorNombre = validarTexto(nombre, LARGO_MAX_NOMBRE, true);
   if (errorNombre !== true) return falla(res, 400, errorNombre);
+  const errorIcono = validarTexto(icono, LARGO_MAX_TEXTO_CORTO, true);
+  if (errorIcono !== true) return falla(res, 400, errorIcono);
+  const errorOrgServicio = validarUuid(orgId, true);
+  if (errorOrgServicio !== true) return falla(res, 400, errorOrgServicio);
   try {
     const fila = await conSesionDe(req.usuarioId!, async (c) => {
       const { rows } = await c.query(
@@ -1090,6 +1206,8 @@ rutas.post("/categorias", requerirSesion, async (req: RequestConUsuario, res) =>
   const { nombre, servicioId } = req.body ?? {};
   const errorNombre = validarTexto(nombre, LARGO_MAX_NOMBRE, true);
   if (errorNombre !== true) return falla(res, 400, errorNombre);
+  const errorServicioCategoria = validarUuid(servicioId, true);
+  if (errorServicioCategoria !== true) return falla(res, 400, errorServicioCategoria);
   try {
     const fila = await conSesionDe(req.usuarioId!, async (c) => {
       const { rows } = await c.query(
@@ -1140,12 +1258,20 @@ rutas.put("/procedimientos", requerirSesion, async (req: RequestConUsuario, res)
   if (errorNombre !== true) return falla(res, 400, errorNombre);
   const errorPrecio = validarMonto(precio);
   if (errorPrecio !== true) return falla(res, 400, errorPrecio);
+  const errorServicioProc = validarUuid(servicioId, true);
+  if (errorServicioProc !== true) return falla(res, 400, errorServicioProc);
+  // "p_..." es el id provisional que le pone el navegador a un
+  // procedimiento nuevo — el servidor le asigna el UUID real.
+  if (id !== undefined && id !== null && typeof id !== "string") return falla(res, 400, "Ese identificador no es válido.");
+  const idReal = typeof id === "string" && !id.startsWith("p_") ? id : null;
+  const errorIdProc = validarUuid(idReal ?? undefined);
+  if (errorIdProc !== true) return falla(res, 400, errorIdProc);
   try {
     await conSesionDe(req.usuarioId!, (c) =>
       c.query(
         `insert into procedimientos (id, service_id, nombre, precio) values (coalesce($1, gen_random_uuid()), $2, $3, $4)
          on conflict (id) do update set nombre = excluded.nombre, precio = excluded.precio`,
-        [id?.startsWith("p_") ? null : id, servicioId, nombre, precio]
+        [idReal, servicioId, nombre, precio]
       )
     );
     res.json({ ok: true });
@@ -1633,6 +1759,7 @@ rutas.patch("/organizaciones/:id", requerirSesion, async (req: RequestConUsuario
     const resultado = validar();
     if (resultado !== true) return falla(res, 400, resultado);
   }
+  if (!Object.keys(mapa).some((campo) => b[campo] !== undefined)) return falla(res, 400, "No hay ningún cambio que guardar.");
   try {
     const fila = await conSesionDe(req.usuarioId!, async (c) => {
       // Antes de cambiar nada — para saber si nombre/color de verdad
@@ -1855,6 +1982,8 @@ rutas.post("/archivos/:id/leido", requerirSesion, async (req: RequestConUsuario,
 // ================================================================
 rutas.post("/eventos", requerirSesion, async (req: RequestConUsuario, res) => {
   const { orgId, accion, detalle } = req.body ?? {};
+  const errorOrgEvento = validarUuid(orgId, true);
+  if (errorOrgEvento !== true) return falla(res, 400, errorOrgEvento);
   // "actor" NUNCA sale del cuerpo de la petición — la política de
   // INSERT de esta tabla solo exige pertenecer a la organización, no
   // que el actor seas tú mismo, así que sin esto cualquier miembro
@@ -1905,11 +2034,19 @@ rutas.post("/eventos", requerirSesion, async (req: RequestConUsuario, res) => {
 const LIMITE_EVENTOS_DEFAULT = 100;
 const LIMITE_EVENTOS_MAXIMO = 500;
 rutas.get("/eventos", requerirSesion, async (req: RequestConUsuario, res) => {
-  const limite = Math.min(Number(req.query.limit) || LIMITE_EVENTOS_DEFAULT, LIMITE_EVENTOS_MAXIMO);
-  const antesDe = req.query.antesDe;
+  // "limit" negativo, decimal o basura ("-5", "1.5", "abc") llegaba a
+  // PostgreSQL tal cual y salía como 500.
+  const limiteCrudo = Number(req.query.limit);
+  const limite = Number.isFinite(limiteCrudo) && limiteCrudo >= 1 ? Math.min(Math.floor(limiteCrudo), LIMITE_EVENTOS_MAXIMO) : LIMITE_EVENTOS_DEFAULT;
+  let antesDe: string | undefined;
+  if (req.query.antesDe !== undefined && req.query.antesDe !== "") {
+    const fecha = typeof req.query.antesDe === "string" ? new Date(req.query.antesDe) : null;
+    if (!fecha || Number.isNaN(fecha.getTime())) return falla(res, 400, "Esa fecha no es válida.");
+    antesDe = fecha.toISOString();
+  }
   try {
     const filas = await conSesionDe(req.usuarioId!, async (c) => {
-      if (typeof antesDe === "string" && antesDe) {
+      if (antesDe) {
         const { rows } = await c.query(
           "select * from eventos_auditoria where org_id = $1 and fecha < $2 order by fecha desc limit $3",
           [req.query.orgId, antesDe, limite]
@@ -2056,7 +2193,9 @@ rutas.post("/requisiciones", requerirSesion, async (req: RequestConUsuario, res)
   if (errorConcepto !== true) return falla(res, 400, errorConcepto);
   const errorNotas = t.notas !== undefined ? validarTexto(t.notas, LARGO_MAX_BIO) : true;
   if (errorNotas !== true) return falla(res, 400, errorNotas);
-  if (!Number.isInteger(t.cantidad) || t.cantidad < 1) return falla(res, 400, "La cantidad debe ser un número entero mayor a cero.");
+  if (!Number.isInteger(t.cantidad) || t.cantidad < 1 || t.cantidad > 100_000) {
+    return falla(res, 400, "La cantidad debe ser un número entero entre 1 y 100,000.");
+  }
 
   try {
     const fila = await conSesionDe(req.usuarioId!, async (c) => {

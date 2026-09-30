@@ -15,8 +15,8 @@ con el código de invitación que imprimió el instalador, se cargaron los
 datos de ejemplo y se recorrieron las pantallas principales en un
 navegador: se creó un folio desde el formulario, se consultó a Quick y
 se imprimieron el cierre de caja y el reporte financiero. La suite de
-pruebas del servidor (134 pruebas, contra PostgreSQL real) pasó
-completa, y `npm audit --omit=dev` reportó cero alertas en el cliente y
+pruebas del servidor (154 pruebas, contra PostgreSQL real) y las 12
+del clasificador de Quick pasaron completas, y `npm audit --omit=dev` reportó cero alertas en el cliente y
 en el servidor.
 
 **Cambios de esta entrega:**
@@ -31,6 +31,20 @@ en el servidor.
   instalación incompleta. Los nombres con acentos se guardan
   correctamente, y las dependencias se instalan exactamente con las
   versiones de los archivos de bloqueo (`npm ci`).
+- Entradas hostiles: la API ya no responde con errores de servidor ante
+  identificadores mal formados, textos con caracteres nulos, listas o
+  banderas de tipo incorrecto, cuerpos JSON inválidos o demasiado
+  grandes; nunca expone rutas internas del servidor; y el tiempo de
+  respuesta del inicio de sesión ya no delata qué correos existen.
+- El bloqueo por intentos fallidos (contraseña y segundo factor) cuenta
+  también los intentos hechos en ráfaga.
+- Quick sin IA: una pregunta muy larga con una palabra repetida ya no
+  congela la interfaz, y "corte del 15 de septiembre" se entiende como
+  corte de caja. Cubierto por 12 pruebas nuevas (`npm test`).
+- Accesibilidad: cero violaciones en el análisis automático (axe-core)
+  de las pantallas principales.
+- Nueva variable opcional `ZONA_HORARIA` para fijar la zona horaria de
+  los folios y cortes de caja del servidor.
 - El cliente de desarrollo queda fijo en `localhost:5173`, el mismo
   origen que acepta el servidor.
 - Reportes impresos sin cortes entre hojas, mejoras de uso en varias

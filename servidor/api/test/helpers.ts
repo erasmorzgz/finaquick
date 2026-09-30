@@ -104,7 +104,7 @@ async function resolverEntornoPostgres(): Promise<NodeJS.ProcessEnv> {
   throw new Error(
     'No se pudo conectar a PostgreSQL (ni con el usuario actual, ni con "postgres"). ' +
       "Si PostgreSQL pide contraseña (la que se puso al instalarlo), defínela antes de correr esto, por ejemplo:\n" +
-      '  set PGPASSWORD=tu-contraseña-de-postgres && npm test   (cmd de Windows)\n' +
+      '  set "PGPASSWORD=tu-contraseña-de-postgres" && npm test   (cmd de Windows)\n' +
       '  $env:PGPASSWORD="tu-contraseña-de-postgres"; npm test  (PowerShell)\n' +
       "Si el rol de PostgreSQL no se llama \"postgres\" en tu instalación, define también PGUSER."
   );

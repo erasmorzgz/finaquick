@@ -76,9 +76,19 @@ function contrastVsWhite(hex: string): number {
   return 1.05 / (relativeLuminance(hex) + 0.05);
 }
 
-// El paso "600" carga texto blanco (botones, píldoras activas): no es un
-// porcentaje fijo de luminosidad como los demás, se busca por bisección la
-// luminosidad más clara que aún pasa 4.5:1 (AA) — algunos tonos (amarillo,
+// El fondo más oscuro de la app (--color-page en index.css). El paso 600
+// también se usa como TEXTO de color de marca (totales, "Entrar al panel")
+// sobre ese beige, no solo como fondo con texto blanco: pasar 4.5:1 contra
+// blanco NO alcanza — contra el beige daba 3.9:1 con cualquier color.
+const FONDO_MAS_OSCURO = "#f1ede3";
+function contrastVsFondo(hex: string): number {
+  return (relativeLuminance(FONDO_MAS_OSCURO) + 0.05) / (relativeLuminance(hex) + 0.05);
+}
+
+// El paso "600" carga texto blanco (botones, píldoras activas) y también
+// se usa como texto sobre el fondo beige: no es un porcentaje fijo de
+// luminosidad como los demás, se busca por bisección la luminosidad más
+// clara que aún pasa 4.5:1 (AA) en AMBOS casos — algunos tonos (amarillo,
 // verde-limón) necesitan mucha más oscuridad que otros para lograrlo.
 function encontrarLuminosidad600(h: number, s: number): number {
   let lo = 15;
@@ -86,7 +96,7 @@ function encontrarLuminosidad600(h: number, s: number): number {
   for (let i = 0; i < 18; i++) {
     const mid = (lo + hi) / 2;
     const hex = hslToHex(h, s, mid);
-    if (contrastVsWhite(hex) >= 4.5) lo = mid;
+    if (Math.min(contrastVsWhite(hex), contrastVsFondo(hex)) >= 4.5) lo = mid;
     else hi = mid;
   }
   return lo;

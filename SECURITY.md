@@ -276,6 +276,26 @@ llamando la API directamente.
   admitidos, reforzada también con una restricción en la base de datos.
 - El estado de un folio se valida contra los únicos dos valores
   admitidos (pagado, crédito).
+- Todo identificador (parámetros de ruta, `orgId`/`servicioId` en la
+  consulta y en el cuerpo, listas de organizaciones o servicios) debe
+  ser un UUID válido; si no, 400 — nunca un error de servidor.
+- Los textos no pueden contener caracteres nulos (que PostgreSQL no
+  admite), y los correos tienen un máximo de 254 caracteres.
+- Contraseñas: mínimo 8 caracteres, texto Unicode bien formado y máximo
+  72 bytes (el límite de bcrypt, que ignora el resto en silencio).
+- Los rechazos de la base de datos por datos fuera de rango, campos
+  obligatorios vacíos, referencias inexistentes o restricciones se
+  traducen a 400/403 con un mensaje claro, no a 500.
+- Un cuerpo JSON inválido o demasiado grande recibe una respuesta JSON
+  breve (400/413); el manejador global nunca devuelve trazas ni rutas
+  internas, y toda ruta `/api` inexistente responde 404 en JSON.
+- El inicio de sesión gasta el mismo tiempo de verificación con un
+  correo que no existe que con uno que sí, para que la latencia no
+  sirva para averiguar qué cuentas existen. El intento fallido se
+  registra antes de responder, así que el bloqueo cuenta las ráfagas.
+- Zona horaria: los folios y los cortes usan la del servidor;
+  `ZONA_HORARIA` (por ejemplo `America/Mexico_City`) la fija de forma
+  explícita, y un valor inválido detiene el arranque con un mensaje.
 
 ## Integridad de folios y montos
 

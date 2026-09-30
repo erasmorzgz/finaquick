@@ -68,12 +68,37 @@ export function descifrarTotp(valorCifrado: string): string {
 const NOMBRE_COOKIE = "finaquick_sesion";
 const TREINTA_DIAS_MS = 30 * 24 * 60 * 60 * 1000;
 
+// Un "sustituto" UTF-16 suelto (por ejemplo "\ud800") es JSON válido pero
+// no es texto Unicode válido — bcryptjs lo procesa mal y lanza un
+// RangeError. Sin esta revisión, mandar uno como contraseña daba un
+// 500 solo cuando la cuenta EXISTÍA (con una cuenta inexistente ni se
+// llegaba a bcrypt, y daba 401): una forma de saber, sin iniciar
+// sesión, qué correos tienen cuenta.
+const SUSTITUTO_SUELTO = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+export function passwordBienFormada(password: string): boolean {
+  return !SUSTITUTO_SUELTO.test(password);
+}
+
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 12);
 }
 
-export async function verificarPassword(password: string, hash: string): Promise<boolean> {
+export async function verificarPassword(password: unknown, hash: string): Promise<boolean> {
+  if (typeof password !== "string" || !passwordBienFormada(password)) return false;
   return bcrypt.compare(password, hash);
+}
+
+// Hash de una contraseña que nadie usa, calculado una sola vez al
+// arrancar. Iniciar sesión con un correo que no existe compara contra
+// este hash: así tarda lo mismo (bcrypt de costo 12, ~0.3 s) que con
+// uno que sí existe. Antes tardaba 3 ms contra ~460 ms, diferencia
+// suficiente para descubrir por internet qué correos tienen cuenta,
+// aunque el mensaje de error fuera idéntico.
+const hashDeRelleno: Promise<string> = bcrypt.hash(randomBytes(16).toString("hex"), 12);
+
+export async function gastarTiempoDeVerificacion(password: unknown): Promise<void> {
+  await verificarPassword(password, await hashDeRelleno);
 }
 
 export function firmarSesion(usuarioId: string): string {

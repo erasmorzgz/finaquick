@@ -29,6 +29,27 @@ process.on("unhandledRejection", (err) => {
 
 registro.limpiarLogsViejos();
 
+// Zona horaria del servidor. Los folios llevan la fecha del día y los
+// totales de Finanzas se agrupan por mes con la hora DEL SERVIDOR,
+// mientras que las pantallas (Cierre de caja, Actividad) agrupan con la
+// hora del navegador de cada persona. Si no coinciden — un servidor en
+// la nube casi siempre corre en UTC —, un cobro hecho después de las 6 pm
+// cae "mañana" para el servidor: el folio sale con la fecha del día
+// siguiente y, el último día del mes, el total de Finanzas no cuadra con
+// el del Cierre de caja. ZONA_HORARIA (ej. America/Mexico_City) la fija
+// sin depender de cómo esté configurado el sistema; vacía usa la del
+// sistema. Un nombre mal escrito detiene el arranque en vez de caer a
+// UTC sin avisar.
+if (process.env.ZONA_HORARIA) {
+  try {
+    new Intl.DateTimeFormat("es-MX", { timeZone: process.env.ZONA_HORARIA });
+  } catch {
+    registro.error(`ZONA_HORARIA="${process.env.ZONA_HORARIA}" no es una zona horaria válida (ejemplo: America/Mexico_City)`);
+    process.exit(1);
+  }
+  process.env.TZ = process.env.ZONA_HORARIA;
+}
+
 const app = express();
 
 // Apagado por default a propósito: el límite de intentos de abajo
@@ -191,6 +212,29 @@ app.get("/api/salud", async (_req, res) => {
   }
 });
 
+// Rutas de la API que no existen: JSON, como todo lo demás de /api (el
+// manejador por default de Express contesta con una página HTML).
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "Esa ruta no existe." });
+});
+
+// Último manejador de errores. Sin él, un cuerpo JSON mal formado o
+// demasiado grande — que se procesa ANTES de llegar a cualquier ruta,
+// incluso sin iniciar sesión — recibía el manejador por default de
+// Express: una página HTML con el error completo y el stack trace, con
+// las rutas de archivos del servidor (usuario del sistema, carpeta de
+// instalación). Aquí se contesta JSON con un mensaje genérico y el
+// detalle se queda solo en el registro del servidor.
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) return next(err);
+  const status = Number(err?.status ?? err?.statusCode);
+  if (status === 413) return res.status(413).json({ error: "El contenido enviado es demasiado grande." });
+  if (err?.type === "entity.parse.failed") return res.status(400).json({ error: "El cuerpo de la petición no es un JSON válido." });
+  if (status >= 400 && status < 500) return res.status(status).json({ error: "La petición no es válida." });
+  registro.error("Error no controlado en una petición", err);
+  res.status(500).json({ error: "Error interno del servidor." });
+});
+
 const puerto = Number(process.env.PORT) || 4000;
 const servidor = app.listen(puerto, () => {
   // No dice "localhost" a propósito — este mismo mensaje aparece igual
@@ -198,7 +242,7 @@ const servidor = app.listen(puerto, () => {
   // el servidor real de la institución detrás de su propio dominio
   // (donde decir "localhost" en el log confundiría a quien lo revise,
   // como si algo estuviera mal configurado cuando no es así).
-  registro.info(`Servidor de Finaquick escuchando en el puerto ${puerto}`);
+  registro.info(`Servidor de Finaquick escuchando en el puerto ${puerto} (zona horaria: ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);
 });
 
 // Sin esto, un gestor de procesos (pm2, systemd, un contenedor)

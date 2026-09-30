@@ -67,6 +67,8 @@ export default function Activity() {
         </h2>
         <div className="flex gap-1.5">
           <button
+            type="button"
+            aria-label="Mes anterior"
             onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
             className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-black/5 dark:hover:bg-white/5"
           >
@@ -79,6 +81,8 @@ export default function Activity() {
             Hoy
           </button>
           <button
+            type="button"
+            aria-label="Mes siguiente"
             onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
             className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-black/5 dark:hover:bg-white/5"
           >
@@ -121,7 +125,7 @@ export default function Activity() {
                     <span
                       className={clsx(
                         "flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-[11px] font-extrabold sm:h-6 sm:min-w-6",
-                        hayPendiente ? "bg-[color:var(--color-warning)] text-[#3b2800]" : "bg-[color:var(--color-good)] text-white"
+                        hayPendiente ? "bg-[color:var(--color-warning)] text-[#3b2800]" : "bg-[color:var(--color-good-solid)] text-white"
                       )}
                     >
                       {delDia.length}
@@ -139,7 +143,7 @@ export default function Activity() {
       </div>
 
       <div className="mt-5 flex items-center gap-4 text-xs text-[var(--color-text-muted)]">
-        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[color:var(--color-good)]" /> Todo pagado</span>
+        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[color:var(--color-good-solid)]" /> Todo pagado</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[color:var(--color-warning)]" /> Con crédito pendiente</span>
       </div>
 

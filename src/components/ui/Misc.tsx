@@ -14,9 +14,9 @@ export function Badge({
   const tones: Record<string, string> = {
     neutral: "bg-black/5 text-[var(--color-text-secondary)] dark:bg-white/10",
     brand: "bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300",
-    good: "bg-[color:var(--color-good)]/10 text-[color:var(--color-good)]",
-    warning: "bg-[color:var(--color-warning)]/15 text-amber-700 dark:text-amber-400",
-    critical: "bg-[color:var(--color-critical)]/10 text-[color:var(--color-critical)]",
+    good: "bg-[color:var(--color-good)]/10 text-[color:var(--color-good-text)]",
+    warning: "bg-[color:var(--color-warning)]/15 text-amber-800 dark:text-amber-400",
+    critical: "bg-[color:var(--color-critical)]/10 text-[color:var(--color-critical-text)]",
   };
   return (
     <span className={clsx("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold", tones[tone], className)}>
@@ -118,8 +118,8 @@ export function StatCard({
               hero
                 ? "bg-white/20 text-white"
                 : delta.positive
-                ? "bg-[color:var(--color-good)]/10 text-[color:var(--color-good)]"
-                : "bg-[color:var(--color-critical)]/10 text-[color:var(--color-critical)]"
+                ? "bg-[color:var(--color-good)]/10 text-[color:var(--color-good-text)]"
+                : "bg-[color:var(--color-critical)]/10 text-[color:var(--color-critical-text)]"
             )}
           >
             {delta.positive ? "↑" : "↓"} {delta.value}

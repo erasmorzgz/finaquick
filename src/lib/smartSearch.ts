@@ -229,11 +229,25 @@ export function esSaludo(textoOriginal: string): boolean {
 // del nombre a buscar.
 const SALUDO_INICIAL = /^[¡¿\s]*((hola|hey|buen[oa]s?\s+(d[ií]as|tardes|noches)|buenas|buen\s+d[ií]a|qu[eé]\s+tal|saludos)\b[\s,!.:;¿]*)?(quick\b[\s,!.:;¿]*)?/i;
 
+// Una pregunta real cabe de sobra en 300 caracteres. Sin este tope, un
+// texto largo con una palabra repetida ("procedimiento procedimiento…")
+// hacía que las expresiones regulares de abajo tardaran tiempo
+// cuadrático: 65 KB congelaban la pestaña casi un segundo, 650 KB más
+// de un minuto. Es el propio navegador de quien escribe, pero pegar por
+// accidente un texto enorme no debería dejarlo trabado.
+export const LARGO_MAX_CONSULTA = 300;
+
 export function interpretarConsulta(textoConSaludo: string, ahora: Date = new Date()): Consulta {
-  const textoOriginal = textoConSaludo.trim().replace(SALUDO_INICIAL, "") || textoConSaludo.trim();
+  const recortado = textoConSaludo.slice(0, LARGO_MAX_CONSULTA);
+  const textoOriginal = recortado.trim().replace(SALUDO_INICIAL, "") || recortado.trim();
   const texto = sinAcentos(textoOriginal.toLowerCase().trim());
 
-  const esCorte = /\bcorte(s)?\s+de\s+caja\b|\bcierre(s)?\s+de\s+caja\b/.test(texto);
+  // "corte de caja", o solo "corte"/"cierre" cuando además trae una fecha
+  // ("corte del 15 de septiembre", "cierre de ayer") — sin fecha, "corte"
+  // sigue siendo una palabra cualquiera, como el apellido de "José Corte".
+  const esCorte =
+    /\bcorte(s)?\s+de\s+caja\b|\bcierre(s)?\s+de\s+caja\b/.test(texto) ||
+    (/\b(corte|cierre)s?\b/.test(texto) && extraerFecha(texto, ahora) !== null);
   if (esCorte) {
     return { tipo: "corte", fecha: extraerFecha(texto, ahora) ?? formatoFecha(ahora) };
   }

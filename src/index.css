@@ -71,7 +71,7 @@
   --color-brand-300: #ffa35c;
   --color-brand-400: #f58b3b;
   --color-brand-500: #e87722;
-  --color-brand-600: #b8560d; /* pasa 4.5:1 con texto blanco encima (AA) — brand-500 puro (2.96:1) no */
+  --color-brand-600: #ab5312; /* pasa 4.5:1 con texto blanco encima Y como texto sobre el fondo beige (AA) — brand-500 puro (2.96:1) no */
   --color-brand-700: #9c4a0c;
   --color-brand-800: #7a3a0a;
   --color-brand-900: #5c2c08;
@@ -102,6 +102,11 @@
 
   /* Estado (fijos, nunca reutilizados como serie) */
   --color-good: #0ca30c;
+  /* Para TEXTO sobre su propio tinte, o con texto blanco encima: --color-good
+     y --color-critical, tal cual, dan 2.9:1 y 3.9:1 (AA pide 4.5:1). */
+  --color-good-text: #0b6a0b;
+  --color-good-solid: #0c7a0c;
+  --color-critical-text: #b42323;
   --color-warning: #fab219;
   --color-serious: #ec835a;
   --color-critical: #d03b3b;

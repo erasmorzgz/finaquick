@@ -43,7 +43,7 @@ export function SearchSelect({
             onChange(e.target.value);
           }}
         />
-        <ComboboxButton className="absolute inset-y-0 right-0 flex items-center pr-3 text-[var(--color-text-muted)]">
+        <ComboboxButton aria-label="Mostrar opciones" className="absolute inset-y-0 right-0 flex items-center pr-3 text-[var(--color-text-muted)]">
           <ChevronsUpDown size={15} />
         </ComboboxButton>
         <ComboboxOptions

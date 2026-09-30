@@ -197,9 +197,13 @@ describe("Confirmar 2FA no puede activar un secreto que nunca se verificó", () 
       assert.equal(status, 200, "el secreto activo debe ser A — el único cuyo código se verificó de verdad");
     } else {
       // Si no quedó activo, la confirmación debió rechazarse con
-      // claridad (409: "cambió mientras confirmabas"), no un éxito a
-      // medias ni un 500 genérico.
-      assert.equal(confirmacion.status, 409);
+      // claridad, no un éxito a medias ni un 500 genérico. Hay dos
+      // rechazos legítimos según en qué punto ganó la otra petición:
+      // 409 ("cambió mientras confirmabas", si sustituyó el secreto
+      // entre la lectura y el UPDATE) o 400 (si lo sustituyó antes de
+      // la lectura: se verificó el código de A contra el secreto B y
+      // no coincide).
+      assert.ok([400, 409].includes(confirmacion.status), `la confirmación dio ${confirmacion.status}`);
     }
   });
 });

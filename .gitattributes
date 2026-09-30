@@ -1,0 +1,8 @@
+# Los scripts de Windows necesitan finales de línea CRLF: con solo LF,
+# cmd.exe puede fallar al encontrar etiquetas (goto / call :etiqueta),
+# de forma que depende de en qué byte cae cada etiqueta. Los de macOS y
+# Linux, al revés: con CRLF, bash no los puede ejecutar.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.command text eol=lf
+*.sh text eol=lf

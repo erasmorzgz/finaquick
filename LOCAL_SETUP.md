@@ -110,6 +110,14 @@ ORIGEN_PERMITIDO=http://localhost:5173
 FRONTEND_URL=http://localhost:5173
 ```
 
+Si el servidor no corre en la misma zona horaria de quienes usan la
+app (un servidor en la nube casi siempre está en UTC), agregar también
+`ZONA_HORARIA=America/Mexico_City` (o la que corresponda, ej.
+`America/Cancun`). Sin eso, un cobro de la tarde-noche puede quedar con
+la fecha del día siguiente, y el último día del mes el total de
+Finanzas no cuadra con el del Cierre de caja. Al arrancar, el servidor
+imprime la zona horaria que está usando.
+
 Generar `JWT_SECRET` (cadena aleatoria usada para firmar las sesiones):
 
 ```bash
@@ -183,6 +191,22 @@ detiene con un mensaje explicándolo, sin dejar nada a medias.
 cd servidor/api
 npm run demo
 ```
+
+**En Windows**, este comando necesita la contraseña del superusuario de
+PostgreSQL (`postgres`, la que se puso al instalarlo). En PowerShell:
+
+```powershell
+$env:PGPASSWORD="tu-contraseña-de-postgres"
+npm run demo
+```
+
+En `cmd`: `set "PGPASSWORD=tu-contraseña-de-postgres"` — con las comillas;
+sin ellas, un espacio al final de la línea pasa a formar parte de la
+contraseña y la conexión falla. Si PowerShell contesta que "la ejecución
+de scripts está deshabilitada en este sistema" (por `npm.ps1`), correr
+una sola vez `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, o
+usar `cmd` en su lugar. Lo mismo aplica a `npm test`, `npm run carga` y
+`npm run demo:vivo`.
 
 Se puede correr varias veces sin duplicar nada: si un servicio o
 categoría ya existe con ese nombre, lo deja tal cual; los folios de
@@ -516,7 +540,10 @@ confirma en vivo, por HTTP, que los controles de seguridad y
 validación descritos en `SECURITY.md` siguen funcionando — registro
 solo por invitación, suplantación de identidad bloqueada, bloqueo de
 cuenta tras intentos fallidos, límites por rol, y que ninguna
-operación reporte éxito sin haber ocurrido de verdad.
+operación reporte éxito sin haber ocurrido de verdad. También cubre
+las entradas mal formadas u hostiles (identificadores inválidos, textos
+con caracteres que la base de datos no puede guardar, cuerpos JSON rotos
+o enormes): deben recibir un 4xx claro, nunca un 500 ni un stack trace.
 
 ```bash
 cd servidor/api
@@ -532,6 +559,14 @@ desplegarlo.
 Al final de la corrida se imprime un reporte de cobertura (qué
 porcentaje de cada archivo del servidor quedó ejercitado por alguna
 prueba) — nativo de Node.js, sin ninguna herramienta adicional.
+
+Aparte, el clasificador de preguntas de Quick que funciona sin IA
+(`src/lib/smartSearch.ts`) tiene sus propias pruebas, que no necesitan
+base de datos ni servidor — desde la carpeta principal del proyecto:
+
+```bash
+npm test
+```
 
 ## 9. Prueba de carga
 
@@ -596,6 +631,9 @@ cuántos usuarios simular.
   aplicación no tengan más privilegios de los necesarios, y señala
   cualquier otra base de datos del mismo servidor con conexión
   abierta por default (ver `SECURITY.md`, "Aislamiento de red").
+- **Zona horaria**: fijar `ZONA_HORARIA` en `servidor/api/.env` a la de
+  la institución (ver el paso 2 de la instalación manual) — los
+  servidores en la nube suelen estar en UTC.
 - Al desplegar detrás de HTTPS, agregar `COOKIE_SECURE=true` en
   `servidor/api/.env`, de forma que la cookie de sesión viaje siempre
   cifrada.

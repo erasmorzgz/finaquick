@@ -37,12 +37,15 @@ export function MobileNav() {
   );
 
   return (
-    <div className="glass flex md:hidden items-center gap-2 overflow-x-auto rounded-none border-x-0 border-t-0 px-4 py-2.5 scrollbar-thin print:hidden">
+    <nav aria-label="Secciones" className="glass flex md:hidden items-center gap-2 overflow-x-auto rounded-none border-x-0 border-t-0 px-4 py-2.5 scrollbar-thin print:hidden">
       <button
+        type="button"
+        aria-label="Cambiar de servicio"
+        title="Cambiar de servicio"
         onClick={salirDeServicio}
         className="material-dark flex flex-shrink-0 items-center justify-center rounded-full p-2 text-white"
       >
-        <Home size={14} />
+        <Home size={14} aria-hidden="true" />
       </button>
       {!soloConsulta && item("/app/nuevo", FilePlus2, "Folio")}
       {item("/app/historial", History, "Historial")}
@@ -54,6 +57,6 @@ export function MobileNav() {
       {(effectiveRole === "admin" || effectiveRole === "finanzas") && item("/app/buscar", Search, "Buscar")}
       {effectiveRole === "admin" && item("/app/admin", Settings, "Config.")}
       {item("/app/perfil", User, "Perfil")}
-    </div>
+    </nav>
   );
 }

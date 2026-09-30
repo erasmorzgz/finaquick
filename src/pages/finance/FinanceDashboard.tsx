@@ -309,7 +309,7 @@ export default function FinanceDashboard() {
                     {r.delta === null ? (
                       <span className="text-[var(--color-text-muted)]">—</span>
                     ) : (
-                      <span className={r.delta >= 0 ? "font-bold text-[color:var(--color-good)]" : "font-bold text-[color:var(--color-critical)]"}>
+                      <span className={r.delta >= 0 ? "font-bold text-[color:var(--color-good-text)]" : "font-bold text-[color:var(--color-critical-text)]"}>
                         {r.delta >= 0 ? "+" : ""}{r.delta.toFixed(0)}%
                       </span>
                     )}
@@ -352,7 +352,7 @@ export default function FinanceDashboard() {
                     {r.delta === null ? (
                       <span className="text-[var(--color-text-muted)]">—</span>
                     ) : (
-                      <span className={r.delta >= 0 ? "font-bold text-[color:var(--color-good)]" : "font-bold text-[color:var(--color-critical)]"}>
+                      <span className={r.delta >= 0 ? "font-bold text-[color:var(--color-good-text)]" : "font-bold text-[color:var(--color-critical-text)]"}>
                         {r.delta >= 0 ? "+" : ""}{r.delta.toFixed(0)}%
                       </span>
                     )}
@@ -382,7 +382,7 @@ export default function FinanceDashboard() {
               <SectionLabel className="mb-1">Ingresos totales</SectionLabel>
               <p className="text-sm text-[var(--color-text-secondary)]">Últimos 6 meses{filtroServicio && " · " + servicios.find((s) => s.id === filtroServicio)?.nombre}</p>
             </div>
-            <Select className="w-56" value={filtroServicio} onChange={(e) => setFiltroServicio(e.target.value)}>
+            <Select aria-label="Servicio de la gráfica" className="w-56" value={filtroServicio} onChange={(e) => setFiltroServicio(e.target.value)}>
               <option value="">Todos los servicios</option>
               {servicios.map((s) => (
                 <option key={s.id} value={s.id}>{s.nombre}</option>
@@ -482,11 +482,11 @@ export default function FinanceDashboard() {
                       {row.deltaPct === null ? (
                         <span className="flex items-center gap-1 text-xs font-bold text-[var(--color-text-muted)]"><Minus size={12} /> —</span>
                       ) : row.deltaPct >= 0 ? (
-                        <span className="flex items-center gap-0.5 rounded-full bg-[color:var(--color-good)]/10 px-2 py-1 text-xs font-bold text-[color:var(--color-good)]">
+                        <span className="flex items-center gap-0.5 rounded-full bg-[color:var(--color-good)]/10 px-2 py-1 text-xs font-bold text-[color:var(--color-good-text)]">
                           <ArrowUpRight size={13} /> {row.deltaPct.toFixed(0)}%
                         </span>
                       ) : (
-                        <span className="flex items-center gap-0.5 rounded-full bg-[color:var(--color-critical)]/10 px-2 py-1 text-xs font-bold text-[color:var(--color-critical)]">
+                        <span className="flex items-center gap-0.5 rounded-full bg-[color:var(--color-critical)]/10 px-2 py-1 text-xs font-bold text-[color:var(--color-critical-text)]">
                           <ArrowDownRight size={13} /> {row.deltaPct.toFixed(0)}%
                         </span>
                       )}
