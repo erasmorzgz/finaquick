@@ -305,7 +305,11 @@ export default function CashClose() {
       )}
       {vista === "dia" && exigeConciliacion && !conciliado && delDia.length > 0 && (
         <p role="status" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900 print:hidden">
-          Para enviar este corte, compáralo primero con el reporte de Getnet.
+          {conciliacion?.cierre && conciliacion.vigente
+            ? "Este corte no cuadra con Getnet. Corrige la diferencia y sube el reporte de nuevo, o pide a un administrador que lo apruebe con diferencia."
+            : conciliacion?.cierre
+              ? "Los cobros con tarjeta cambiaron desde la última comparación: sube el reporte de Getnet de nuevo."
+              : "Para enviar este corte, compáralo primero con el reporte de Getnet."}
         </p>
       )}
 

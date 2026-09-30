@@ -16,7 +16,7 @@ datos de ejemplo y se recorrieron las pantallas principales en un
 navegador: se creó un folio desde el formulario, se consultó a Quick y
 se imprimieron el cierre de caja y el reporte financiero. La suite de
 pruebas del servidor (249 pruebas, contra PostgreSQL real) y las del
-cliente (45: clasificador de Quick, lector del reporte de Getnet y
+cliente (50: clasificador de Quick, lector del reporte de Getnet y
 recuperación de folios) pasaron completas; `npm run lint` no reporta
 avisos, y `npm audit --omit=dev` reportó cero alertas en el cliente y en
 el servidor. Las pantallas nuevas se recorrieron en un navegador
@@ -54,6 +54,8 @@ deshace la corrección):
   verificar la referencia o la fecha.
 - La vigencia de la comparación usa una huella de cada cobro, no solo la
   suma y la cantidad.
+- Se lee el Excel antiguo (`.xls`) del portal de Getnet, con varias hojas,
+  y se avisa de referencias casi iguales a la del servicio.
 - También: se leen los `.xls` que son tablas HTML/XML, la actualización de
   la base se aplica aunque se conserve el `.env`, el servidor avisa si su
   base es de una versión anterior, y la pantalla aclara que la

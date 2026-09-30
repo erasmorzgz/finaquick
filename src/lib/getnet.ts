@@ -236,6 +236,346 @@ export async function leerXlsx(bytes: Uint8Array): Promise<string[][]> {
   return filas;
 }
 
+// ---------------------------------------------------------------------
+// Excel antiguo (.xls, BIFF8): un archivo "compuesto" (tipo mini sistema
+// de archivos) con el libro dentro. Se lee sin dependencias: primero el
+// contenedor, luego los registros del libro. Solo lo necesario para
+// leer texto y números de las hojas.
+// ---------------------------------------------------------------------
+
+const FIRMA_CFB = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+const FIN_DE_CADENA = 0xfffffffe;
+
+function leerContenedorCfb(bytes: Uint8Array): Uint8Array {
+  if (bytes.length < 512 || FIRMA_CFB.some((b, i) => bytes[i] !== b)) throw new Error("El archivo no es un Excel válido.");
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const tamSector = 1 << v.getUint16(0x1e, true);
+  const tamMini = 1 << v.getUint16(0x20, true);
+  if (tamSector !== 512 && tamSector !== 4096) throw new Error("El archivo Excel está dañado.");
+  const inicioDirectorio = v.getUint32(0x30, true);
+  const corteMini = v.getUint32(0x38, true);
+  const inicioMiniFat = v.getUint32(0x3c, true);
+  const inicioDifat = v.getUint32(0x44, true);
+  const numDifat = v.getUint32(0x48, true);
+  const desplazamiento = (id: number) => (id + 1) * tamSector;
+  const sector = (id: number) => {
+    const ini = desplazamiento(id);
+    if (ini < 0 || ini + tamSector > bytes.length) throw new Error("El archivo Excel está dañado.");
+    return bytes.subarray(ini, ini + tamSector);
+  };
+
+  // Sectores de la tabla de asignación (FAT): 109 en el encabezado, más la cadena DIFAT.
+  const sectoresFat: number[] = [];
+  for (let i = 0; i < 109; i++) {
+    const id = v.getUint32(0x4c + i * 4, true);
+    if (id < 0xfffffffc) sectoresFat.push(id);
+  }
+  let difat = inicioDifat;
+  for (let n = 0; n < numDifat && difat < 0xfffffffc; n++) {
+    const d = new DataView(sector(difat).buffer, sector(difat).byteOffset, tamSector);
+    for (let i = 0; i < tamSector / 4 - 1; i++) {
+      const id = d.getUint32(i * 4, true);
+      if (id < 0xfffffffc) sectoresFat.push(id);
+    }
+    difat = d.getUint32(tamSector - 4, true);
+  }
+  const fat: number[] = [];
+  for (const id of sectoresFat) {
+    const d = new DataView(sector(id).buffer, sector(id).byteOffset, tamSector);
+    for (let i = 0; i < tamSector / 4; i++) fat.push(d.getUint32(i * 4, true));
+  }
+  const cadena = (inicio: number, tabla: number[], limite = 100_000): number[] => {
+    const ids: number[] = [];
+    for (let id = inicio; id < 0xfffffffa && ids.length < limite; id = tabla[id] ?? FIN_DE_CADENA) ids.push(id);
+    return ids;
+  };
+  const leerCadena = (inicio: number): Uint8Array => {
+    const ids = cadena(inicio, fat);
+    const salida = new Uint8Array(ids.length * tamSector);
+    ids.forEach((id, i) => salida.set(sector(id), i * tamSector));
+    return salida;
+  };
+
+  // Directorio: buscar el flujo "Workbook" (o "Book", de versiones viejas).
+  const directorio = leerCadena(inicioDirectorio);
+  const dv = new DataView(directorio.buffer, directorio.byteOffset, directorio.byteLength);
+  let raiz: { inicio: number } | null = null;
+  let libro: { inicio: number; tamano: number } | null = null;
+  for (let ini = 0; ini + 128 <= directorio.length; ini += 128) {
+    const largoNombre = dv.getUint16(ini + 0x40, true);
+    if (largoNombre < 2 || largoNombre > 64) continue;
+    let nombre = "";
+    for (let i = 0; i < largoNombre / 2 - 1; i++) nombre += String.fromCharCode(dv.getUint16(ini + i * 2, true));
+    const tipo = directorio[ini + 0x42];
+    const inicio = dv.getUint32(ini + 0x74, true);
+    const tamano = dv.getUint32(ini + 0x78, true);
+    if (tipo === 5) raiz = { inicio };
+    if (tipo === 2 && (nombre === "Workbook" || (nombre === "Book" && !libro))) libro = { inicio, tamano };
+  }
+  if (!libro) throw new Error("No se encontró la hoja de datos del Excel. Guárdalo como .xlsx o CSV.");
+
+  if (libro.tamano >= corteMini) return leerCadena(libro.inicio).subarray(0, libro.tamano);
+  // Flujos chicos viven en el "mini flujo" de la raíz.
+  if (!raiz) throw new Error("El archivo Excel está dañado.");
+  const miniFlujo = leerCadena(raiz.inicio);
+  const miniFat: number[] = [];
+  for (const id of cadena(inicioMiniFat, fat)) {
+    const d = new DataView(sector(id).buffer, sector(id).byteOffset, tamSector);
+    for (let i = 0; i < tamSector / 4; i++) miniFat.push(d.getUint32(i * 4, true));
+  }
+  const ids = cadena(libro.inicio, miniFat);
+  const salida = new Uint8Array(ids.length * tamMini);
+  ids.forEach((id, i) => salida.set(miniFlujo.subarray(id * tamMini, (id + 1) * tamMini), i * tamMini));
+  return salida.subarray(0, libro.tamano);
+}
+
+interface Registro {
+  id: number;
+  datos: Uint8Array;
+  /** Registros CONTINUE que le siguen (las cadenas largas se parten en ellos). */
+  continuaciones: Uint8Array[];
+}
+
+function leerRegistros(libro: Uint8Array, desde: number, hastaEof: boolean): { registros: Registro[]; fin: number } {
+  const v = new DataView(libro.buffer, libro.byteOffset, libro.byteLength);
+  const registros: Registro[] = [];
+  let pos = desde;
+  let nivel = 0;
+  while (pos + 4 <= libro.length) {
+    const id = v.getUint16(pos, true);
+    const largo = v.getUint16(pos + 2, true);
+    const datos = libro.subarray(pos + 4, pos + 4 + largo);
+    pos += 4 + largo;
+    if (id === 0x003c && registros.length > 0) {
+      registros[registros.length - 1].continuaciones.push(datos);
+      continue;
+    }
+    registros.push({ id, datos, continuaciones: [] });
+    if (id === 0x0809) nivel++; // BOF
+    if (id === 0x000a) {
+      nivel--; // EOF
+      if (hastaEof && nivel <= 0) break;
+    }
+  }
+  return { registros, fin: pos };
+}
+
+/** Lector de cadenas que pueden continuar en los registros CONTINUE. */
+class LectorCadenas {
+  private trozo = 0;
+  private pos = 0;
+  private readonly trozos: Uint8Array[];
+  constructor(trozos: Uint8Array[]) {
+    this.trozos = trozos;
+  }
+  private actual() {
+    return this.trozos[this.trozo];
+  }
+  private alFinal() {
+    return this.trozo >= this.trozos.length;
+  }
+  byte(): number {
+    while (!this.alFinal() && this.pos >= this.actual().length) {
+      this.trozo++;
+      this.pos = 0;
+    }
+    if (this.alFinal()) throw new Error("El archivo Excel está dañado.");
+    return this.actual()[this.pos++];
+  }
+  u16(): number {
+    return this.byte() | (this.byte() << 8);
+  }
+  u32(): number {
+    return (this.u16() | (this.u16() << 16)) >>> 0;
+  }
+  saltar(n: number) {
+    while (n > 0) {
+      if (this.alFinal()) return;
+      const disponible = this.actual().length - this.pos;
+      if (disponible <= 0) {
+        this.trozo++;
+        this.pos = 0;
+        continue;
+      }
+      const toma = Math.min(disponible, n);
+      this.pos += toma;
+      n -= toma;
+    }
+  }
+  hayMas(): boolean {
+    while (!this.alFinal() && this.pos >= this.actual().length) {
+      this.trozo++;
+      this.pos = 0;
+    }
+    return !this.alFinal();
+  }
+  /** Cadena de Excel: largo (u16), opciones, [runs], [extensión], caracteres. */
+  cadena(largoEnBytes: 1 | 2 = 2): string {
+    const cch = largoEnBytes === 2 ? this.u16() : this.byte();
+    const opciones = this.byte();
+    const runs = opciones & 0x08 ? this.u16() : 0;
+    const extension = opciones & 0x04 ? this.u32() : 0;
+    const texto = this.caracteres(cch, opciones & 0x01 ? true : false);
+    this.saltar(runs * 4 + extension);
+    return texto;
+  }
+  caracteres(cch: number, ancho: boolean): string {
+    let salida = "";
+    let restantes = cch;
+    let esAncho = ancho;
+    while (restantes > 0) {
+      if (!this.hayMas()) throw new Error("El archivo Excel está dañado.");
+      // Al empezar un CONTINUE con una cadena a medias, su primer byte repite la opción de ancho.
+      if (this.pos === 0 && this.trozo > 0) esAncho = (this.byte() & 0x01) === 1;
+      const tam = esAncho ? 2 : 1;
+      const disponibles = Math.floor((this.actual().length - this.pos) / tam);
+      const toma = Math.min(restantes, disponibles);
+      if (toma <= 0) {
+        this.trozo++;
+        this.pos = 0;
+        continue;
+      }
+      const t = this.actual();
+      for (let i = 0; i < toma; i++) {
+        salida += esAncho ? String.fromCharCode(t[this.pos] | (t[this.pos + 1] << 8)) : String.fromCharCode(t[this.pos]);
+        this.pos += tam;
+      }
+      restantes -= toma;
+    }
+    return salida;
+  }
+}
+
+function decodificarRk(rk: number): number {
+  let valor: number;
+  if (rk & 0x02) valor = rk >> 2;
+  else {
+    const b = new DataView(new ArrayBuffer(8));
+    b.setUint32(4, (rk & 0xfffffffc) >>> 0, true);
+    valor = b.getFloat64(0, true);
+  }
+  return rk & 0x01 ? valor / 100 : valor;
+}
+
+const textoNumero = (n: number) => (Number.isFinite(n) ? String(Math.round(n * 1e10) / 1e10) : "");
+
+export interface HojaLeida {
+  nombre: string;
+  filas: string[][];
+}
+
+/** Lee todas las hojas de un .xls (Excel 97-2003). */
+export function leerXls(bytes: Uint8Array): HojaLeida[] {
+  const libro = leerContenedorCfb(bytes);
+  const vl = new DataView(libro.buffer, libro.byteOffset, libro.byteLength);
+  if (libro.length < 8 || vl.getUint16(0, true) !== 0x0809) throw new Error("El archivo Excel está dañado.");
+  if (vl.getUint16(4, true) < 0x0600) throw new Error("Ese Excel es de una versión muy antigua. Ábrelo y guárdalo como .xlsx o CSV.");
+
+  const globales = leerRegistros(libro, 0, true).registros;
+  const hojasDef: { nombre: string; offset: number }[] = [];
+  const compartidas: string[] = [];
+  for (const r of globales) {
+    const d = new DataView(r.datos.buffer, r.datos.byteOffset, r.datos.byteLength);
+    if (r.id === 0x002f) throw new Error("Ese Excel está protegido con contraseña. Guárdalo sin protección, o como CSV.");
+    if (r.id === 0x0085 && r.datos.length >= 8) {
+      const lector = new LectorCadenas([r.datos.subarray(6)]);
+      hojasDef.push({ nombre: lector.cadena(1), offset: d.getUint32(0, true) });
+    }
+    if (r.id === 0x00fc) {
+      const lector = new LectorCadenas([r.datos.subarray(8), ...r.continuaciones]);
+      const unicos = d.getUint32(4, true);
+      for (let i = 0; i < unicos && lector.hayMas(); i++) compartidas.push(lector.cadena(2));
+    }
+  }
+
+  const hojas: HojaLeida[] = [];
+  for (const def of hojasDef) {
+    if (def.offset <= 0 || def.offset >= libro.length) continue;
+    const { registros } = leerRegistros(libro, def.offset, true);
+    const celdas = new Map<number, Map<number, string>>();
+    const poner = (fila: number, col: number, valor: string) => {
+      if (fila > 65_535 || col > 500 || valor === "") return;
+      let f = celdas.get(fila);
+      if (!f) celdas.set(fila, (f = new Map()));
+      f.set(col, valor);
+    };
+    let formulaPendiente: { fila: number; col: number } | null = null;
+    for (const r of registros) {
+      const d = new DataView(r.datos.buffer, r.datos.byteOffset, r.datos.byteLength);
+      const n = r.datos.length;
+      switch (r.id) {
+        case 0x00fd: // LABELSST
+          if (n >= 10) poner(d.getUint16(0, true), d.getUint16(2, true), (compartidas[d.getUint32(6, true)] ?? "").trim());
+          break;
+        case 0x0204: // LABEL
+          if (n >= 8) poner(d.getUint16(0, true), d.getUint16(2, true), new LectorCadenas([r.datos.subarray(6), ...r.continuaciones]).cadena(2).trim());
+          break;
+        case 0x0203: // NUMBER
+          if (n >= 14) poner(d.getUint16(0, true), d.getUint16(2, true), textoNumero(d.getFloat64(6, true)));
+          break;
+        case 0x027e: // RK
+          if (n >= 10) poner(d.getUint16(0, true), d.getUint16(2, true), textoNumero(decodificarRk(d.getUint32(6, true))));
+          break;
+        case 0x00bd: { // MULRK
+          if (n < 6) break;
+          const fila = d.getUint16(0, true);
+          const primera = d.getUint16(2, true);
+          const cantidad = Math.floor((n - 6) / 6);
+          for (let i = 0; i < cantidad; i++) poner(fila, primera + i, textoNumero(decodificarRk(d.getUint32(4 + i * 6 + 2, true))));
+          break;
+        }
+        case 0x0006: { // FORMULA: el resultado es un número, o una cadena en el registro que sigue
+          if (n < 14) break;
+          const fila = d.getUint16(0, true);
+          const col = d.getUint16(2, true);
+          if (d.getUint16(12, true) === 0xffff) {
+            if (r.datos[6] === 0) formulaPendiente = { fila, col };
+            else if (r.datos[6] === 1) poner(fila, col, r.datos[8] ? "VERDADERO" : "FALSO");
+          } else poner(fila, col, textoNumero(d.getFloat64(6, true)));
+          break;
+        }
+        case 0x0207: // STRING (resultado de una fórmula)
+          if (formulaPendiente) {
+            poner(formulaPendiente.fila, formulaPendiente.col, new LectorCadenas([r.datos, ...r.continuaciones]).cadena(2).trim());
+            formulaPendiente = null;
+          }
+          break;
+        default:
+          break;
+      }
+    }
+    const filas: string[][] = [];
+    const indices = [...celdas.keys()].sort((a, b) => a - b);
+    for (const i of indices) {
+      const f = celdas.get(i)!;
+      const ancho = Math.max(...f.keys()) + 1;
+      const fila = Array.from({ length: ancho }, (_, c) => f.get(c) ?? "");
+      if (fila.some((c) => c !== "")) filas.push(fila);
+    }
+    hojas.push({ nombre: def.nombre, filas });
+  }
+  return hojas;
+}
+
+/** La hoja que más parece un reporte de movimientos (los reportes de Getnet
+ * traen varias: transacciones, productos, tiempo aire…). */
+export function elegirHoja(hojas: HojaLeida[]): string[][] {
+  let mejor: HojaLeida | null = null;
+  let mejorPuntaje = -1;
+  for (const h of hojas) {
+    const i = buscarEncabezado(h.filas);
+    if (i < 0) continue;
+    const c = detectarColumnas(h.filas[i]);
+    const datos = h.filas.slice(i + 1).filter((f) => c.monto !== undefined && parsearMonto(f[c.monto] ?? "") !== null).length;
+    const puntaje = (c.monto !== undefined ? 1000 : 0) + datos;
+    if (puntaje > mejorPuntaje) {
+      mejorPuntaje = puntaje;
+      mejor = h;
+    }
+  }
+  return (mejor ?? hojas.find((h) => h.filas.length > 0) ?? { filas: [] as string[][] }).filas;
+}
+
 function textoDeXml(fragmento: string): string {
   return entidadesXml(fragmento.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim();
 }
@@ -263,9 +603,7 @@ export async function leerArchivoTabla(nombre: string, bytes: Uint8Array): Promi
     const tabla = leerTablaMarcada(decodificarTexto(bytes));
     if (tabla.length > 0) return tabla;
   }
-  if (/\.xls$/i.test(nombre) || (bytes.length > 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf)) {
-    throw new Error("Ese es un Excel antiguo (.xls). Ábrelo y guárdalo como .xlsx o como CSV.");
-  }
+  if (bytes.length > 8 && FIRMA_CFB.every((b, i) => bytes[i] === b)) return elegirHoja(leerXls(bytes));
   if (/\.pdf$/i.test(nombre) || (bytes.length > 4 && bytes[0] === 0x25 && bytes[1] === 0x50)) {
     throw new Error("Un PDF no se puede leer. Descarga el reporte de Getnet en Excel o CSV.");
   }
@@ -446,7 +784,26 @@ function buscarEncabezado(filas: string[][]): number {
   return mejor;
 }
 
+/** ¿Difieren como mucho en un carácter (cambiado, sobrante o faltante)? */
+function casiIguales(a: string, b: string): boolean {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  const [larga, corta] = a.length > b.length ? [a, b] : [b, a];
+  return larga.slice(i + 1) === corta.slice(i);
+}
+
+export interface ReferenciaParecida {
+  referencia: string;
+  movimientos: number;
+  total: number;
+}
+
 export interface ReporteInterpretado {
+  /** Movimientos con una referencia que difiere en un solo dígito de la del servicio
+   * (un error de captura en la terminal, quizá): no se incluyen, solo se avisa. */
+  referenciasParecidas: ReferenciaParecida[];
   movimientos: MovimientoGetnet[];
   encabezado: string[];
   filaEncabezado: number;
@@ -489,7 +846,7 @@ export function interpretarReporte(
   const vacio = (): ReporteInterpretado => ({
     movimientos: [], encabezado, filaEncabezado, columnas,
     ignoradas: { otraFecha: 0, otraReferencia: 0, rechazadas: 0, sinMonto: 0, fechaIlegible: 0 },
-    confirmaciones: [], referenciaEncontrada: true, fechasEnArchivo: [], avisos,
+    confirmaciones: [], referenciasParecidas: [], referenciaEncontrada: true, fechasEnArchivo: [], avisos,
   });
   if (columnas.monto === undefined) {
     avisos.push("No se encontró la columna del monto. Elígela abajo.");
@@ -520,6 +877,7 @@ export function interpretarReporte(
   }
 
   const ignoradas = { otraFecha: 0, otraReferencia: 0, rechazadas: 0, sinMonto: 0, fechaIlegible: 0 };
+  const parecidas = new Map<string, ReferenciaParecida>();
   const fechas = new Set<string>();
   const candidatos: { movimiento: MovimientoGetnet; fecha: string | null }[] = [];
   for (const fila of datos) {
@@ -535,12 +893,26 @@ export function interpretarReporte(
       if (fila.some((c) => c.trim() !== "")) ignoradas.sinMonto++;
       continue;
     }
-    if (!cumpleReferencia(fila)) {
-      ignoradas.otraReferencia++;
-      continue;
-    }
     if (columnas.estatus !== undefined && /(rechaz|declin|denegad|no aprobad|fallid|error)/.test(normalizar(fila[columnas.estatus] ?? ""))) {
       ignoradas.rechazadas++;
+      continue;
+    }
+    if (!cumpleReferencia(fila)) {
+      ignoradas.otraReferencia++;
+      if (ref.length >= 5) {
+        for (const i of columnas.referencia) {
+          const celda = fila[i] ?? "";
+          const parecido = [celda, ...celda.split(/[^A-Za-z0-9]+/)].map(SIN_LETRAS_NI_CEROS).find((t) => t.length >= 5 && casiIguales(t, ref));
+          if (parecido) {
+            const literal = (celda.split(/[^A-Za-z0-9]+/).find((t) => SIN_LETRAS_NI_CEROS(t) === parecido) ?? celda).trim();
+            const previo = parecidas.get(literal) ?? { referencia: literal, movimientos: 0, total: 0 };
+            previo.movimientos++;
+            previo.total = Math.round((previo.total + Math.abs(monto)) * 100) / 100;
+            parecidas.set(literal, previo);
+            break;
+          }
+        }
+      }
       continue;
     }
     const { fecha, hora: horaDeFecha } = columnas.fecha !== undefined ? parsearFechaHora(fila[columnas.fecha] ?? "") : { fecha: null, hora: undefined };
@@ -594,5 +966,9 @@ export function interpretarReporte(
   if (movimientos.length > 5000) avisos.push("El reporte trae más de 5,000 movimientos: no se puede comparar completo.");
 
   if (ignoradas.fechaIlegible > 0) avisos.push(`${ignoradas.fechaIlegible} fila(s) con fecha ilegible o vacía se omitieron.`);
-  return { movimientos, encabezado, filaEncabezado, columnas, ignoradas, confirmaciones, referenciaEncontrada, fechasEnArchivo, avisos };
+  const referenciasParecidas = [...parecidas.values()];
+  for (const p of referenciasParecidas) {
+    avisos.push(`${p.movimientos} movimiento(s) por $${p.total.toFixed(2)} traen la referencia ${p.referencia}, casi igual a ${opciones.referencia}: no se incluyeron. Si son de este servicio, hay un error de captura en la terminal.`);
+  }
+  return { movimientos, encabezado, filaEncabezado, columnas, ignoradas, confirmaciones, referenciasParecidas, referenciaEncontrada, fechasEnArchivo, avisos };
 }

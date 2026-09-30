@@ -161,13 +161,13 @@ export function ConciliacionGetnet({
 
       {puedeOperar ? (
         <div className={cierre ? "mt-4 border-t border-[var(--color-border)] pt-3" : ""}>
-          <input ref={entrada} type="file" accept=".csv,.txt,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="sr-only" aria-label="Reporte diario de Getnet" onChange={(e) => { void elegirArchivo(e.target.files?.[0]); e.target.value = ""; }} />
+          <input ref={entrada} type="file" accept=".csv,.txt,.xls,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="sr-only" aria-label="Reporte diario de Getnet" onChange={(e) => { void elegirArchivo(e.target.files?.[0]); e.target.value = ""; }} />
           <div className="flex flex-wrap items-center gap-2">
             <Button variant={cierre ? "ghost" : "secondary"} size="sm" icon={<Upload size={14} />} disabled={leyendo || comparando} onClick={() => entrada.current?.click()}>
               {leyendo ? "Leyendo…" : cierre ? "Subir el reporte de nuevo" : "Subir reporte de Getnet"}
             </Button>
             <span className="text-xs text-[var(--color-text-muted)]">
-              {cobrosTarjeta > 0 ? `${cobrosTarjeta} cobro${cobrosTarjeta === 1 ? "" : "s"} con tarjeta en el sistema este día.` : "No hay cobros con tarjeta en el sistema este día."} Excel (.xlsx) o CSV.
+              {cobrosTarjeta > 0 ? `${cobrosTarjeta} cobro${cobrosTarjeta === 1 ? "" : "s"} con tarjeta en el sistema este día.` : "No hay cobros con tarjeta en el sistema este día."} Excel (.xls o .xlsx) o CSV.
             </span>
           </div>
 

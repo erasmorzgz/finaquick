@@ -2,9 +2,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { deflateRawSync } from "node:zlib";
+import { readFileSync } from "node:fs";
 import {
   parsearCSV, parsearMonto, parsearFechaHora, detectarColumnas, interpretarReporte,
-  leerArchivoTabla, leerXlsx, decodificarTexto, huellaArchivo, leerTablaMarcada,
+  leerArchivoTabla, leerXlsx, decodificarTexto, huellaArchivo, leerTablaMarcada, leerXls,
 } from "./getnet.ts";
 
 const CSV_GETNET = [
@@ -258,7 +259,6 @@ describe("Excel (.xlsx)", () => {
   test("un archivo dañado, un PDF y un .xls antiguo dan un error claro, no una excepción rara", async () => {
     await assert.rejects(leerXlsx(Uint8Array.from([0x50, 0x4b, 1, 2, 3, 4, 5, 6])), /Excel/);
     await assert.rejects(leerArchivoTabla("r.pdf", Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d])), /PDF/);
-    await assert.rejects(leerArchivoTabla("r.xls", Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1])), /\.xlsx|CSV/);
     const truncado = crearXlsx(filas).slice(0, 60);
     await assert.rejects(leerXlsx(truncado));
   });
@@ -321,7 +321,65 @@ describe("Tablas HTML y XML con extensión .xls", () => {
     assert.deepEqual(leerTablaMarcada(xml), [["Fecha", "Monto"], ["30/09/2026", "100"]]);
   });
 
-  test("un .xls binario antiguo sigue dando un error claro", async () => {
-    await assert.rejects(leerArchivoTabla("r.xls", Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1])), /\.xlsx|CSV/);
+});
+
+describe("Excel antiguo (.xls, BIFF8)", () => {
+  // Archivo sintético (datos inventados) con la misma estructura que el
+  // reporte de Getnet: 3 hojas, títulos arriba, 260 transacciones con
+  // referencias variadas (hay tantas cadenas que el Excel las parte en
+  // varios bloques), tarjetas enmascaradas y filas de resumen al final.
+  const bytes = new Uint8Array(readFileSync(new URL("./fixtures/getnet-muestra.xls", import.meta.url)));
+
+  test("lee todas las hojas, con acentos y números", () => {
+    const hojas = leerXls(bytes);
+    assert.deepEqual(hojas.map((h) => h.nombre), ["Resumen", "Transacciones", "Productos"]);
+    const t = hojas[1].filas;
+    assert.equal(t[0][0], "Reporte de Transacciones"); // las filas vacías no cuentan
+    assert.equal(t[3][2], "Aplicación");
+    assert.ok(Number.isFinite(Number(t[4][7])) && Number(t[4][7]) > 0);
+    assert.ok(t.some((f) => f[0] === "Resumen MXN"));
+  });
+
+  test("elige la hoja de transacciones aunque no sea la primera", async () => {
+    const r = interpretarReporte(await leerArchivoTabla("reporte.xls", bytes), { fecha: "2026-09-29", referencia: "566029" });
+    assert.equal(r.encabezado[r.columnas.monto!], "Importe");
+    assert.ok(r.movimientos.length > 0);
+  });
+
+  test("toma las transacciones de la referencia (con o sin ceros a la izquierda), sin las rechazadas ni las filas de resumen", async () => {
+    const r = interpretarReporte(await leerArchivoTabla("reporte.xls", bytes), { fecha: "2026-09-29", referencia: "566029" });
+    const ventas = r.movimientos.filter((m) => m.tipo === "venta");
+    const cancelaciones = r.movimientos.filter((m) => m.tipo === "cancelacion");
+    // Valores calculados al generar el archivo.
+    assert.equal(r.movimientos.length, 127);
+    assert.equal(Math.round(ventas.reduce((s, m) => s + m.monto, 0) * 100) / 100, 46073.11);
+    assert.equal(Math.round(cancelaciones.reduce((s, m) => s + m.monto, 0) * 100) / 100, 3205);
+    assert.ok(r.ignoradas.rechazadas > 0);
+    assert.deepEqual(r.confirmaciones, []);
+    assert.equal(r.movimientos[0].hora, "08:00");
+    assert.match(r.movimientos[0].autorizacion ?? "", /^\d{6}$/);
+  });
+
+  test("avisa de una referencia casi igual (556029 por 566029) sin incluirla", async () => {
+    const r = interpretarReporte(await leerArchivoTabla("reporte.xls", bytes), { fecha: "2026-09-29", referencia: "566029" });
+    assert.equal(r.referenciasParecidas.length, 1);
+    assert.equal(r.referenciasParecidas[0].referencia, "556029");
+    assert.equal(r.referenciasParecidas[0].movimientos, 36);
+    assert.ok(r.avisos.some((a) => a.includes("556029") && a.includes("casi igual")));
+  });
+
+  test("las referencias parecidas de otro tipo no avisan (mucho más largas o distintas)", () => {
+    const tabla = parsearCSV("Fecha,Referencia,Importe\n29/09/2026,00454779,10\n29/09/2026,5660299,20\n29/09/2026,566029,30");
+    const r = interpretarReporte(tabla, { fecha: "2026-09-29", referencia: "566029" });
+    assert.deepEqual(r.referenciasParecidas.map((p) => p.referencia), ["5660299"]);
+    assert.equal(r.movimientos.length, 1);
+  });
+
+  test("un archivo dañado o truncado da un error claro, no una excepción rara", async () => {
+    await assert.rejects(leerArchivoTabla("r.xls", bytes.slice(0, 700)), /Excel/);
+    const roto = bytes.slice();
+    roto.fill(0, 512, 1024);
+    await assert.rejects(leerArchivoTabla("r.xls", roto), /Excel|hoja/);
+    await assert.rejects(leerArchivoTabla("r.xls", Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0])), /Excel/);
   });
 });

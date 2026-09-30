@@ -700,14 +700,19 @@ terceros para funcionar.
 1. **Referencia**: en **Configuración → Servicios**, cada servicio que
    cobra con terminal Getnet lleva su referencia (por ejemplo `566029`
    para odontología). Sirve para tomar solo sus movimientos del reporte.
-2. **Reporte del día**: se descarga del portal de Getnet en Excel
-   (`.xlsx`) o CSV. En **Cierre de caja** (vista por día) se elige la
+2. **Reporte del día**: se descarga del portal de Getnet (Excel `.xls`
+   o `.xlsx`, o CSV). El reporte trae varias hojas y los movimientos de
+   todas las referencias de la terminal; el sistema toma la hoja de
+   transacciones y solo las filas de la referencia del servicio. En **Cierre de caja** (vista por día) se elige la
    fecha y se usa *Subir reporte de Getnet*. El archivo se lee en el
    navegador: no se sube a ningún lado.
 3. **Lectura**: las columnas de monto, fecha, autorización y tipo de
    movimiento se detectan por el nombre de su encabezado; solo se toman
    las filas de la referencia del servicio y del día elegido, y se
-   omiten las operaciones rechazadas. Si algún encabezado no se
+   omiten las operaciones rechazadas. Si una referencia casi igual a la
+   del servicio aparece en el reporte (un dígito distinto, por ejemplo
+   `556029` en lugar de `566029`), se avisa con su importe: puede ser un
+   error de captura en la terminal. Si algún encabezado no se
    reconoce, se puede indicar la columna a mano antes de comparar.
 4. **Comparación**: los cobros con tarjeta (débito y crédito) del
    sistema ese día contra los movimientos del reporte, uno a uno por
