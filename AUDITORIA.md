@@ -38,6 +38,8 @@ en el servidor.
   respuesta del inicio de sesión ya no delata qué correos existen.
 - El bloqueo por intentos fallidos (contraseña y segundo factor) cuenta
   también los intentos hechos en ráfaga.
+- El instalador de macOS se detiene con un mensaje claro si se queda
+  sin entrada, en lugar de repetir el aviso indefinidamente.
 - Quick sin IA: una pregunta muy larga con una palabra repetida ya no
   congela la interfaz, y "corte del 15 de septiembre" se entiende como
   corte de caja. Cubierto por 12 pruebas nuevas (`npm test`).

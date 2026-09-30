@@ -157,14 +157,14 @@ else
     # configurarlo después a mano (LOCAL_SETUP.md, paso 4).
     ADMIN_ORG=""
     while [ -z "$ADMIN_ORG" ]; do
-      read -p "Nombre de la institución (ej. Universidad Anáhuac): " ADMIN_ORG
+      read -p "Nombre de la institución (ej. Universidad Anáhuac): " ADMIN_ORG || detener "No se recibió respuesta (la entrada se cerró) — vuelve a abrir el instalador desde una terminal normal."
       if [ -z "$ADMIN_ORG" ]; then
         echo "El nombre de la institución no puede quedar vacío — Finaquick necesita al menos una cuenta de administrador para poder usarse. Vuelve a intentar, o cierra esta ventana (Ctrl+C) si prefieres configurarlo después a mano (ver LOCAL_SETUP.md, paso 4)."
       fi
     done
     ADMIN_CORREO=""
     while [ -z "$ADMIN_CORREO" ]; do
-      read -p "Correo del primer administrador: " ADMIN_CORREO
+      read -p "Correo del primer administrador: " ADMIN_CORREO || detener "No se recibió respuesta (la entrada se cerró) — vuelve a abrir el instalador desde una terminal normal."
       if [ -z "$ADMIN_CORREO" ]; then
         echo "El correo del administrador no puede quedar vacío — Finaquick necesita al menos una cuenta de administrador para poder usarse. Vuelve a intentar, o cierra esta ventana (Ctrl+C) si prefieres configurarlo después a mano (ver LOCAL_SETUP.md, paso 4)."
       fi
