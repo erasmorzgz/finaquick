@@ -294,6 +294,7 @@ export default function CashClose() {
 
       {vista === "dia" && servicioActual && delDia.length > 0 && (
         <ConciliacionGetnet
+          key={servicioActual.id}
           servicio={servicioActual}
           fecha={fecha}
           info={conciliacion}

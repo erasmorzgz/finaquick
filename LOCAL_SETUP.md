@@ -697,37 +697,40 @@ terceros para funcionar.
 
 ### Conciliación del corte de caja con Getnet
 
-1. **Referencia**: en **Configuración → Servicios**, cada servicio que
-   cobra con terminal Getnet lleva su referencia (por ejemplo `566029`
-   para odontología). Sirve para tomar solo sus movimientos del reporte.
-2. **Reporte del día**: se descarga del portal de Getnet (Excel `.xls`
-   o `.xlsx`, o CSV). El reporte trae varias hojas y los movimientos de
-   todas las referencias de la terminal; el sistema toma la hoja de
-   transacciones y solo las filas de la referencia del servicio. En **Cierre de caja** (vista por día) se elige la
-   fecha y se usa *Subir reporte de Getnet*. El archivo se lee en el
-   navegador: no se sube a ningún lado.
-3. **Lectura**: las columnas de monto, fecha, autorización y tipo de
-   movimiento se detectan por el nombre de su encabezado; solo se toman
-   las filas de la referencia del servicio y del día elegido, y se
-   omiten las operaciones rechazadas. Si una referencia casi igual a la
-   del servicio aparece en el reporte (un dígito distinto, por ejemplo
-   `556029` en lugar de `566029`), se avisa con su importe: puede ser un
-   error de captura en la terminal. Si algún encabezado no se
-   reconoce, se puede indicar la columna a mano antes de comparar.
-4. **Comparación**: los cobros con tarjeta (débito y crédito) del
-   sistema ese día contra los movimientos del reporte, uno a uno por
-   monto. Una cancelación anula una venta del mismo monto. El resultado
-   es *cuadra* o *no cuadra*, con la lista de lo que está de un lado y no
-   del otro.
-5. **Enviar**: con la referencia configurada y cobros con tarjeta ese
-   día, el corte solo se envía si cuadra, o si un administrador lo
-   aprueba «con diferencia» dejando el motivo. Lo que se envía es el
-   corte completo del día, armado por el servidor (no la selección de
-   folios de la pantalla). Si después cambia cualquier cobro con tarjeta
-   de ese día, la comparación deja de valer y hay que repetirla. Un día
-   sin cobros con tarjeta se envía sin comparar. Las filas del reporte
-   con fecha ilegible se omiten y hay que reconocerlo antes de comparar;
-   la coincidencia con Getnet es por monto, no por persona.
+En **Cierre de caja** (vista por día), elige la fecha y:
+
+1. **Escribe la referencia** de Getnet del servicio (por ejemplo `566029`
+   para odontología). Si quien la escribe es administrador, queda
+   guardada en el servicio y la próxima vez ya aparece; también se puede
+   fijar en Configuración → Servicios.
+2. **Sube el reporte** del día tal como lo descargas del portal de Getnet
+   (Excel `.xls` o `.xlsx`, o CSV). **Compara solo**: no hay que
+   pulsar nada más ni elegir columnas. El archivo se lee en el
+   navegador, no se sube a ningún lado.
+3. **Resultado**: *cuadra* o *no cuadra*, con la lista de lo que está de
+   un lado y no del otro (cada movimiento de Getnet con su autorización
+   y hora).
+
+El reporte de Getnet trae varias hojas y los movimientos de todas las
+referencias de la terminal: se usa la hoja de transacciones y solo las
+filas de esa referencia y del día elegido; se omiten las operaciones
+rechazadas, y una cancelación anula una venta del mismo monto. Si una
+referencia casi igual a la del servicio aparece en el reporte (un dígito
+distinto, por ejemplo `556029` en lugar de `566029`), se avisa con su
+importe: puede ser un error de captura en la terminal.
+
+**Cuándo pide revisar antes de comparar**: si el archivo trae filas con
+fecha ilegible, si la referencia no aparece en él, si no trae fecha, o si
+no se reconoce la columna del monto. En esos casos se muestra qué pasó y
+se compara hasta que se reconozca (o se elija la columna a mano).
+
+**Enviar**: con la referencia configurada y cobros con tarjeta ese día,
+el corte solo se envía si cuadra, o si un administrador lo aprueba «con
+diferencia» dejando el motivo. Lo que se envía es el corte completo del
+día, armado por el servidor (no la selección de folios de la pantalla).
+Si después cambia cualquier cobro con tarjeta de ese día, la comparación
+deja de valer y hay que repetirla. Un día sin cobros con tarjeta se envía
+sin comparar. La coincidencia con Getnet es por monto, no por persona.
 
 Se guardan el nombre del archivo, su huella (SHA-256) y los montos y
 autorizaciones comparados; **no** el archivo ni números de tarjeta. El

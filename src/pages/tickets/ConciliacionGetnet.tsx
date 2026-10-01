@@ -2,15 +2,17 @@ import { useMemo, useRef, useState } from "react";
 import { FileSpreadsheet, ShieldCheck, TriangleAlert, Upload, CircleCheck, CircleX } from "lucide-react";
 import { Card } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
-import { Field, Select } from "../../components/ui/Input";
+import { Field, Input, Select } from "../../components/ui/Input";
 import { Badge } from "../../components/ui/Misc";
 import * as db from "../../lib/db";
+import { useService } from "../../lib/service/ServiceContext";
 import type { CierreCaja, CierreCajaConVigencia, ServiceConfig } from "../../lib/db/types";
 import { formatoMXN } from "../../lib/utils";
 import { huellaArchivo, interpretarReporte, leerArchivoTabla, type Columnas } from "../../lib/getnet";
 import { ESTADO_CIERRE_LABEL } from "../../lib/cierreEstado";
 
 const MAX_ARCHIVO = 8 * 1024 * 1024;
+const REGEX_REFERENCIA = /^[A-Za-z0-9._-]{0,30}$/;
 
 const ESTADO_CIERRE_TONE = { aprobado: "good", no_aprobado: "critical", aprobado_con_diferencia: "warning" } as const;
 
@@ -35,6 +37,11 @@ export function ConciliacionGetnet({
   onActualizado: (nuevo: CierreCajaConVigencia) => void;
 }) {
   const entrada = useRef<HTMLInputElement>(null);
+  const { recargarServicios } = useService();
+  // La referencia se escribe aquí mismo; si quien sube el reporte es
+  // administrador, queda guardada en el servicio para la próxima vez.
+  const [refTexto, setRefTexto] = useState(servicio.referenciaGetnet ?? "");
+  const [avisosDelArchivo, setAvisosDelArchivo] = useState<string[]>([]);
   const [lectura, setLectura] = useState<Lectura | null>(null);
   const [leyendo, setLeyendo] = useState(false);
   const [comparando, setComparando] = useState(false);
@@ -45,7 +52,7 @@ export function ConciliacionGetnet({
   // Reconocer lo que no se pudo verificar del archivo (fechas ilegibles, referencia o fecha sin comprobar).
   const [reconozco, setReconozco] = useState(false);
 
-  const referencia = servicio.referenciaGetnet;
+  const referencia = refTexto.trim() || undefined;
   const cierre = info?.cierre ?? null;
   const vigente = info?.vigente ?? false;
 
@@ -63,13 +70,21 @@ export function ConciliacionGetnet({
     setError(null);
     setLectura(null);
     setReconozco(false);
+    setAvisosDelArchivo([]);
+    if (!REGEX_REFERENCIA.test(refTexto.trim())) return setError("La referencia solo puede llevar letras, números, punto o guion.");
     if (archivo.size > MAX_ARCHIVO) return setError("El archivo pesa más de 8 MB — descarga solo el día que necesitas.");
     setLeyendo(true);
     try {
       const bytes = new Uint8Array(await archivo.arrayBuffer());
       const [tabla, huella] = await Promise.all([leerArchivoTabla(archivo.name, bytes), huellaArchivo(bytes)]);
       if (tabla.length === 0) throw new Error("El archivo está vacío.");
-      setLectura({ nombre: archivo.name.slice(0, 200), huella, tabla, columnas: {} });
+      const nueva: Lectura = { nombre: archivo.name.slice(0, 200), huella, tabla, columnas: {} };
+      const previo = interpretarReporte(tabla, { fecha, referencia });
+      // Si todo se pudo verificar, se compara de una vez: sin pasos intermedios.
+      if (previo.columnas.monto !== undefined && previo.confirmaciones.length === 0 && previo.movimientos.length <= 5000) {
+        setLeyendo(false);
+        await comparar(nueva, previo);
+      } else setLectura(nueva);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo leer el archivo.");
     } finally {
@@ -77,15 +92,20 @@ export function ConciliacionGetnet({
     }
   }
 
-  async function comparar() {
-    if (!lectura || !reporte) return;
+  async function comparar(l: Lectura, r: ReturnType<typeof interpretarReporte>) {
     setComparando(true);
     setError(null);
     try {
+      // Un administrador deja guardada la referencia en el servicio.
+      if (esAdmin && (referencia ?? "") !== (servicio.referenciaGetnet ?? "")) {
+        await db.actualizarServicio(servicio.id, { referenciaGetnet: referencia ?? "" });
+        await recargarServicios();
+      }
       const nuevo = await db.conciliarCierreCaja({
-        servicioId: servicio.id, fecha, referencia, archivoNombre: lectura.nombre, archivoHash: lectura.huella, movimientos: reporte.movimientos,
+        servicioId: servicio.id, fecha, referencia, archivoNombre: l.nombre, archivoHash: l.huella, movimientos: r.movimientos,
       });
       onActualizado(nuevo);
+      setAvisosDelArchivo(r.avisos);
       setLectura(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo comparar el corte.");
@@ -117,18 +137,10 @@ export function ConciliacionGetnet({
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <FileSpreadsheet size={18} className="text-brand-600" aria-hidden />
         <h2 className="text-sm font-extrabold text-[var(--color-text-primary)]">Conciliación con Getnet</h2>
-        {referencia && <span className="text-xs text-[var(--color-text-muted)]">Referencia {referencia}</span>}
         {cierre && <Badge tone={ESTADO_CIERRE_TONE[cierre.estado]} className="ml-auto">{ESTADO_CIERRE_LABEL[cierre.estado]}</Badge>}
       </div>
 
       {error && <p role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">{error}</p>}
-
-      {!referencia && (
-        <p className="mb-3 rounded-xl bg-black/[0.03] px-3.5 py-2.5 text-xs text-[var(--color-text-secondary)]">
-          Este servicio todavía no tiene su referencia de Getnet{esAdmin ? " — agrégala en Configuración → Servicios (ej. 566029) para tomar solo sus movimientos del reporte" : " — pídele a un administrador que la agregue"}.
-          Mientras tanto se compara con todos los movimientos del archivo, y enviar el corte no exige la comparación.
-        </p>
-      )}
 
       {cierre && !vigente && (
         <p role="status" className="mb-3 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900">
@@ -162,14 +174,26 @@ export function ConciliacionGetnet({
       {puedeOperar ? (
         <div className={cierre ? "mt-4 border-t border-[var(--color-border)] pt-3" : ""}>
           <input ref={entrada} type="file" accept=".csv,.txt,.xls,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="sr-only" aria-label="Reporte diario de Getnet" onChange={(e) => { void elegirArchivo(e.target.files?.[0]); e.target.value = ""; }} />
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant={cierre ? "ghost" : "secondary"} size="sm" icon={<Upload size={14} />} disabled={leyendo || comparando} onClick={() => entrada.current?.click()}>
-              {leyendo ? "Leyendo…" : cierre ? "Subir el reporte de nuevo" : "Subir reporte de Getnet"}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="w-full sm:w-48">
+              <label htmlFor="getnet-referencia" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">Referencia de Getnet</label>
+              <Input id="getnet-referencia" value={refTexto} onChange={(e) => setRefTexto(e.target.value)} maxLength={30} placeholder="Ej. 566029" inputMode="text" autoComplete="off" />
+            </div>
+            <Button size="sm" className="h-[42px]" icon={<Upload size={14} />} disabled={leyendo || comparando} onClick={() => entrada.current?.click()}>
+              {leyendo ? "Leyendo…" : comparando ? "Comparando…" : cierre ? "Subir el reporte de nuevo" : "Subir el reporte y comparar"}
             </Button>
-            <span className="text-xs text-[var(--color-text-muted)]">
-              {cobrosTarjeta > 0 ? `${cobrosTarjeta} cobro${cobrosTarjeta === 1 ? "" : "s"} con tarjeta en el sistema este día.` : "No hay cobros con tarjeta en el sistema este día."} Excel (.xls o .xlsx) o CSV.
-            </span>
           </div>
+          <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+            {cobrosTarjeta > 0 ? `${cobrosTarjeta} cobro${cobrosTarjeta === 1 ? "" : "s"} con tarjeta en el sistema este día.` : "No hay cobros con tarjeta en el sistema este día."} Sube el Excel (.xls o .xlsx) o CSV tal como lo descargas de Getnet: se compara solo.
+            {!esAdmin && referencia && referencia !== (servicio.referenciaGetnet ?? "") ? " Un administrador puede guardar la referencia para no escribirla cada vez." : ""}
+          </p>
+          {avisosDelArchivo.length > 0 && (
+            <ul className="mt-2 flex flex-col gap-1 text-sm text-amber-900">
+              {avisosDelArchivo.map((a) => (
+                <li key={a} className="flex items-start gap-2"><TriangleAlert size={14} className="mt-0.5 flex-shrink-0" aria-hidden />{a}</li>
+              ))}
+            </ul>
+          )}
 
           {lectura && reporte && (
             <div className="mt-3 flex flex-col gap-3 rounded-xl border border-[var(--color-border)] p-3.5">
@@ -215,7 +239,7 @@ export function ConciliacionGetnet({
                 </div>
               </details>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" icon={<CircleCheck size={14} />} disabled={comparando || reporte.columnas.monto === undefined || reporte.movimientos.length > 5000 || (reporte.confirmaciones.length > 0 && !reconozco)} onClick={comparar}>
+                <Button size="sm" icon={<CircleCheck size={14} />} disabled={comparando || reporte.columnas.monto === undefined || reporte.movimientos.length > 5000 || (reporte.confirmaciones.length > 0 && !reconozco)} onClick={() => void comparar(lectura, reporte)}>
                   {comparando ? "Comparando…" : "Comparar con el corte"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setLectura(null)}>Descartar</Button>
